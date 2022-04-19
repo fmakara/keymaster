@@ -29,6 +29,7 @@
 
 #include "bsp/board.h"
 #include "tusb.h"
+#include "usb_descriptors.h"
 
 #include "fatfs/ffconf.h"
 // #include "fatfs/diskio.h"
@@ -58,33 +59,37 @@ void cdc_task(void);
 FATFS fs;
 BYTE ffs_work[FF_MAX_SS];
 const MKFS_PARM defconfig = {
-    FM_FAT, 0, 0, 0, 0
+    FM_FAT|FM_SFD, 0, 0, 0, 0
 };
 /*------------- MAIN -------------*/
 int main(void)
 {
-    board_init();
-    memset(&fs, 0, sizeof(fs));
-    FRESULT res;
-    if(f_mount(&fs, "", 0) != FR_OK){
-        res = f_mkfs("", &defconfig, ffs_work, sizeof(ffs_work));
-        if( res==FR_OK ){
-            res = f_mount(&fs, "", 1);
-        }
-    }
+    f_mkfs("", &defconfig, ffs_work, sizeof(ffs_work));
+    f_mount(&fs, "", 1);
+    f_setlabel("KeyMaster");
     FIL fil;
     UINT bw;
     f_open(&fil, "hello.txt", FA_CREATE_NEW | FA_WRITE);
     f_write(&fil, "Hello, World!\r\n", 15, &bw);
     f_close(&fil);
+    f_mount(0, "", 0);
 
+    board_init();
     tusb_init();
-
+    uint32_t count = board_millis()+1000;
     while (1){
+        //if(board_millis()>count){
+        //  count = board_millis()+1000;
+        //  char teste[20];
+        //  int len = sprintf(teste, "teste %d!\n", count);
+        //  tud_cdc_write(teste, len);
+        //  tud_cdc_write_flush();
+        //}
+
         tud_task(); // tinyusb device task
         led_blinking_task();
 
-        cdc_task();
+        //cdc_task();
     }
 
     return 0;
@@ -125,6 +130,8 @@ void tud_resume_cb(void)
 //--------------------------------------------------------------------+
 // USB CDC
 //--------------------------------------------------------------------+
+/*
+// TODO: apenas se quiser uart!!
 void cdc_task(void)
 {
   // connected() check for DTR bit
@@ -169,6 +176,79 @@ void tud_cdc_line_state_cb(uint8_t itf, bool dtr, bool rts)
 void tud_cdc_rx_cb(uint8_t itf)
 {
   (void) itf;
+}*/
+
+//--------------------------------------------------------------------+
+// USB HID
+//--------------------------------------------------------------------+
+// Invoked when received SET_PROTOCOL request
+// protocol is either HID_PROTOCOL_BOOT (0) or HID_PROTOCOL_REPORT (1)
+void tud_hid_set_protocol_cb(uint8_t instance, uint8_t protocol)
+{
+  (void) instance;
+  (void) protocol;
+
+  // nothing to do since we use the same compatible boot report for both Boot and Report mode.
+  // TOOD set a indicator for user
+}
+
+// Invoked when sent REPORT successfully to host
+// Application can use this to send the next report
+// Note: For composite reports, report[0] is report ID
+void tud_hid_report_complete_cb(uint8_t instance, uint8_t const* report, uint8_t len)
+{
+  (void) instance;
+  (void) report;
+  (void) len;
+
+  // nothing to do
+}
+
+// Invoked when received GET_REPORT control request
+// Application must fill buffer report's content and return its length.
+// Return zero will cause the stack to STALL request
+uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t* buffer, uint16_t reqlen)
+{
+  // TODO not Implemented
+  (void) instance;
+  (void) report_id;
+  (void) report_type;
+  (void) buffer;
+  (void) reqlen;
+
+  return 0;
+}
+
+// Invoked when received SET_REPORT control request or
+// received data on OUT endpoint ( Report ID = 0, Type = 0 )
+void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t report_type, uint8_t const* buffer, uint16_t bufsize)
+{
+  (void) report_id;
+
+  // keyboard interface
+  if (instance == ITF_NUM_KEYBOARD)
+  {
+    // Set keyboard LED e.g Capslock, Numlock etc...
+    if (report_type == HID_REPORT_TYPE_OUTPUT)
+    {
+      // bufsize should be (at least) 1
+      if ( bufsize < 1 ) return;
+
+      uint8_t const kbd_leds = buffer[0];
+
+      if (kbd_leds & KEYBOARD_LED_CAPSLOCK)
+      {
+        // Capslock On: disable blink, turn led on
+        blink_interval_ms = 0;
+        board_led_write(true);
+      }else
+      {
+        // Caplocks Off: back to normal blink
+        board_led_write(false);
+        blink_interval_ms = BLINK_MOUNTED;
+      }
+    }
+  }
 }
 
 //--------------------------------------------------------------------+

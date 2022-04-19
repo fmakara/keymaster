@@ -23,13 +23,14 @@
  *
  */
 
+#include <stdio.h>
 #include "bsp/board.h"
 #include "tusb.h"
 
 // whether host does safe-eject
 static bool ejected = false;
 
-#define DISK_BLOCK_NUM 132
+#define DISK_BLOCK_NUM 130
 #define DISK_BLOCK_SIZE 512
 extern "C" uint8_t msc_disk[DISK_BLOCK_NUM][DISK_BLOCK_SIZE];
 

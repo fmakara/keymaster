@@ -10,8 +10,7 @@
 #include <string.h>
 #include "ff.h"			/* Obtains integer types */
 #include "diskio.h"		/* Declarations of disk functions */
-
-#define DISK_BLOCK_NUM 132
+#define DISK_BLOCK_NUM 130
 #define DISK_BLOCK_SIZE 512
 uint8_t msc_disk[DISK_BLOCK_NUM][DISK_BLOCK_SIZE];
 

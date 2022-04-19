@@ -73,35 +73,50 @@ uint8_t const * tud_descriptor_device_cb(void)
   return (uint8_t const *) &desc_device;
 }
 
+uint8_t const desc_hid_keyboard_report[] =
+{
+  TUD_HID_REPORT_DESC_KEYBOARD()
+};
+
+// Invoked when received GET HID REPORT DESCRIPTOR
+// Application return pointer to descriptor
+// Descriptor contents must exist long enough for transfer to complete
+uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)
+{
+  return desc_hid_keyboard_report;
+}
+
+
 //--------------------------------------------------------------------+
 // Configuration Descriptor
 //--------------------------------------------------------------------+
 
-enum
-{
-  ITF_NUM_CDC = 0,
-  ITF_NUM_CDC_DATA,
-  ITF_NUM_MSC,
-  ITF_NUM_TOTAL
-};
+#include "usb_descriptors.h"
 
 #if CFG_TUSB_MCU == OPT_MCU_LPC175X_6X || CFG_TUSB_MCU == OPT_MCU_LPC177X_8X || CFG_TUSB_MCU == OPT_MCU_LPC40XX
   // LPC 17xx and 40xx endpoint type (bulk/interrupt/iso) are fixed by its number
   // 0 control, 1 In, 2 Bulk, 3 Iso, 4 In, 5 Bulk etc ...
-  #define EPNUM_CDC_NOTIF   0x81
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x82
+//  #define EPNUM_CDC_NOTIF   0x81
+//  #define EPNUM_CDC_OUT     0x02
+//  #define EPNUM_CDC_IN      0x82
+//  #define EPNUM_MSC_OUT     0x05
+//  #define EPNUM_MSC_IN      0x85  
+//  #define EPNUM_KEYBOARD    0x87
 
+  #define EPNUM_KEYBOARD    0x81
   #define EPNUM_MSC_OUT     0x05
   #define EPNUM_MSC_IN      0x85
 
 #elif CFG_TUSB_MCU == OPT_MCU_SAMG  || CFG_TUSB_MCU ==  OPT_MCU_SAMX7X
   // SAMG & SAME70 don't support a same endpoint number with different direction IN and OUT
   //    e.g EP1 OUT & EP1 IN cannot exist together
-  #define EPNUM_CDC_NOTIF   0x81
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x83
+//  #define EPNUM_CDC_NOTIF   0x81
+//  #define EPNUM_CDC_OUT     0x02
+//  #define EPNUM_CDC_IN      0x83
+//  #define EPNUM_MSC_OUT     0x04
+//  #define EPNUM_MSC_IN      0x85
 
+  #define EPNUM_KEYBOARD    0x81
   #define EPNUM_MSC_OUT     0x04
   #define EPNUM_MSC_IN      0x85
 
@@ -110,24 +125,33 @@ enum
   //    e.g EP1 OUT & EP1 IN cannot exist together
   // CXD56 USB driver has fixed endpoint type (bulk/interrupt/iso) and direction (IN/OUT) by its number
   // 0 control (IN/OUT), 1 Bulk (IN), 2 Bulk (OUT), 3 In (IN), 4 Bulk (IN), 5 Bulk (OUT), 6 In (IN)
-  #define EPNUM_CDC_NOTIF   0x83
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x81
-
+//  #define EPNUM_CDC_NOTIF   0x83
+//  #define EPNUM_CDC_OUT     0x02
+//  #define EPNUM_CDC_IN      0x81
+//  #define EPNUM_MSC_OUT     0x05
+//  #define EPNUM_MSC_IN      0x84
+//  #define EPNUM_KEYBOARD    0x87
+  
+  #define EPNUM_KEYBOARD    0x81
   #define EPNUM_MSC_OUT     0x05
   #define EPNUM_MSC_IN      0x84
 
 #else
-  #define EPNUM_CDC_NOTIF   0x81
-  #define EPNUM_CDC_OUT     0x02
-  #define EPNUM_CDC_IN      0x82
+//  #define EPNUM_CDC_NOTIF   0x81
+//  #define EPNUM_CDC_OUT     0x02
+//  #define EPNUM_CDC_IN      0x82
+//  #define EPNUM_MSC_OUT     0x03
+//  #define EPNUM_MSC_IN      0x83
+//  #define EPNUM_KEYBOARD    0x84
 
+  #define EPNUM_KEYBOARD    0x81
   #define EPNUM_MSC_OUT     0x03
   #define EPNUM_MSC_IN      0x83
 
 #endif
 
-#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN)
+// #define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_CDC_DESC_LEN + TUD_MSC_DESC_LEN + TUD_HID_DESC_LEN)
+#define CONFIG_TOTAL_LEN    (TUD_CONFIG_DESC_LEN + TUD_HID_DESC_LEN + TUD_MSC_DESC_LEN )
 
 // full speed configuration
 uint8_t const desc_fs_configuration[] =
@@ -135,11 +159,18 @@ uint8_t const desc_fs_configuration[] =
   // Config number, interface count, string index, total length, attribute, power in mA
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
 
-  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
-  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
+  // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 10),
+
+//  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
+//  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 64),
 
   // Interface number, string index, EP Out & EP In address, EP size
   TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 64),
+
+//  // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+//  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 10),
+
 };
 
 #if TUD_OPT_HIGH_SPEED
@@ -151,11 +182,18 @@ uint8_t const desc_hs_configuration[] =
   // Config number, interface count, string index, total length, attribute, power in mA
   TUD_CONFIG_DESCRIPTOR(1, ITF_NUM_TOTAL, 0, CONFIG_TOTAL_LEN, 0x00, 100),
 
-  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
-  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 512),
+  // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 10),
+
+//  // Interface number, string index, EP notification address and size, EP data address (out, in) and size.
+//  TUD_CDC_DESCRIPTOR(ITF_NUM_CDC, 4, EPNUM_CDC_NOTIF, 8, EPNUM_CDC_OUT, EPNUM_CDC_IN, 512),
 
   // Interface number, string index, EP Out & EP In address, EP size
   TUD_MSC_DESCRIPTOR(ITF_NUM_MSC, 5, EPNUM_MSC_OUT, EPNUM_MSC_IN, 512),
+
+//    // Interface number, string index, protocol, report descriptor len, EP In address, size & polling interval
+//  TUD_HID_DESCRIPTOR(ITF_NUM_KEYBOARD, 0, HID_ITF_PROTOCOL_KEYBOARD, sizeof(desc_hid_keyboard_report), EPNUM_KEYBOARD, CFG_TUD_HID_EP_BUFSIZE, 10),
+
 };
 
 // other speed configuration
@@ -233,7 +271,7 @@ char const* string_desc_arr [] =
   "TinyUSB",                     // 1: Manufacturer
   "TinyUSB Device",              // 2: Product
   "123456789012",                // 3: Serials, should use chip ID
-  "TinyUSB CDC",                 // 4: CDC Interface
+//  "TinyUSB CDC",                 // 4: CDC Interface
   "TinyUSB MSC",                 // 5: MSC Interface
 };
 
