@@ -7,11 +7,12 @@ pico_sdk_init()
 
 add_executable(keymaster
     src/main.cpp
-    src/usb_descriptors.cpp
+    src/usb/usb_descriptors.cpp
+    src/usb/unused_callbacks.cpp
     src/display/ssd1306.cpp
     src/sprite/dict8.cpp
     src/sprite/sprite.cpp
-    src/unused_callbacks.cpp
+    src/pers/persistency.cpp
 )
 
 target_include_directories(keymaster PUBLIC
@@ -21,6 +22,8 @@ target_include_directories(keymaster PUBLIC
 target_link_libraries(keymaster
     pico_stdlib
     hardware_i2c
+    hardware_flash
+    pico_multicore
     tinyusb_device
     tinyusb_board
 )
