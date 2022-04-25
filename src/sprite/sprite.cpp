@@ -114,7 +114,7 @@ void Sprite::rect(uint8_t x0, uint8_t y0, uint8_t x1, uint8_t y1, Color c){
 void Sprite::copy(const Sprite& src, int16_t x, int16_t y){
     if(x>=_w || y>=_h || (-x)>src._w || (-y)>src._h)return;
     uint64_t srcMask = ((1<<(src._h))-1);
-    uint64_t destMask = srcMask<<(y+_y);
+    uint64_t destMask = ~(srcMask<<(y+_y));
     for(int i=0; i<src._w; i++){
         int16_t dx = i+x;
         if(dx>=0 && dx<_w){

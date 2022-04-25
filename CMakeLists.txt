@@ -12,6 +12,7 @@ add_executable(keymaster
     src/display/ssd1306.cpp
     src/sprite/dict8.cpp
     src/sprite/sprite.cpp
+    src/sprite/menu.cpp
     src/pers/persistency.cpp
 )
 
