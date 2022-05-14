@@ -1,5 +1,6 @@
 #pragma once
 
+#include <string>
 #include "display/ssd1306.h"
 
 class Menu {

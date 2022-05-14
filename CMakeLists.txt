@@ -24,6 +24,7 @@ target_link_libraries(keymaster
     pico_stdlib
     hardware_i2c
     hardware_flash
+    hardware_adc
     pico_multicore
     tinyusb_device
     tinyusb_board
