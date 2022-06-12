@@ -25,65 +25,73 @@
 
 bool lastCaps=false, lastNum=false, lastScroll=false, lastKeysInited=false;
 std::list<char> hidCharList;
-SSD1306_128x32 display;
+SSD1306_72x40 display;
 Dict8 writer(&display);
 
 queue_t usbHIDKeyQueue, usbHIDEvtQueue, usbCDCinputQueue;
 const uint8_t ascii2keycode[128][2] = { HID_ASCII_TO_KEYCODE };
 
-inline void sendHID(const std::string& s){
+void sendHID(const std::string& s){
   for(int i=0; i<s.size(); i++) queue_add_blocking(&usbHIDKeyQueue, &s[i]);
 }
 
-const uint8_t ledPins[4] = {21, 20, 19, 18};
-const uint8_t adcPins[4] = {26, 27, 28, 29};
+#define IR_CNT (3)
+const uint8_t ledPins[IR_CNT] = {20, 19, 18};
+const uint8_t adcPins[IR_CNT] = {26, 27, 28};
 
 void readRawAnalogInputs(uint16_t* dark, uint16_t* bright){
   static const uint8_t binFilter = 2;
   static const uint8_t multFilter = (1<<binFilter)-1;
-  static uint32_t lastRawRead[2*4] = {0};
+  static uint32_t lastRawRead[2*IR_CNT] = {0};
   static bool startedUp = false;
-  uint32_t currentRead[2*4];
-  for(int i=0; i<4; i++) gpio_put(ledPins[i], false);
+  uint32_t currentRead[2*IR_CNT];
+  for(int i=0; i<IR_CNT; i++) gpio_put(ledPins[i], false);
   sleep_us(100);
-  for(int i=0; i<4; i++) {
+  for(int i=0; i<IR_CNT; i++) {
     adc_select_input(i);
     currentRead[0+i] = adc_read();
     gpio_put(ledPins[i], true);
     sleep_us(100);
-    currentRead[4+i] = adc_read();
+    currentRead[IR_CNT+i] = adc_read();
     gpio_put(ledPins[i], false);    
     sleep_us(100);
   }
 
   if(!startedUp){
     startedUp = true;
-    for(int i=0; i<2*4; i++)lastRawRead[i] = currentRead[i];
+    for(int i=0; i<2*IR_CNT; i++)lastRawRead[i] = currentRead[i];
   }
-  for(int i=0; i<2*4; i++)lastRawRead[i] = (lastRawRead[i]*multFilter+currentRead[i])>>binFilter;
-  for(int i=0; i<4; i++){
+  for(int i=0; i<2*IR_CNT; i++)lastRawRead[i] = (lastRawRead[i]*multFilter+currentRead[i])>>binFilter;
+  for(int i=0; i<IR_CNT; i++){
     dark[i] = lastRawRead[i+0];
-    bright[i] = lastRawRead[i+4];
+    bright[i] = lastRawRead[i+IR_CNT];
   }
 }
 
 uint8_t interpretRawIR(uint16_t* dark, uint16_t* bright){
   static const uint16_t th = 100;
   uint8_t ret = 0;
-  for(int i=0; i<4; i++){
+  for(int i=0; i<IR_CNT; i++){
     if(dark[i]<bright[i]+300) ret |= (1<<i);
   }
   return ret;
 }
 
 uint8_t readIR(){
-  uint16_t dark[4], bright[4];
+  uint16_t dark[IR_CNT], bright[IR_CNT];
   readRawAnalogInputs(dark, bright);
+  // a bit more spice for rand operations
+  uint16_t randAcc = 0xCAFE;
+  for(int i=0; i<IR_CNT; i++) randAcc ^= dark[i]^bright[i];
+  randAcc ^= randAcc>>8;
+  randAcc ^= randAcc>>4;
+  randAcc &= 0xF;
+  for(int i=0; i<randAcc; i++) rand();
   return interpretRawIR(dark, bright);
 }
 
 void setLeds(uint8_t leds){
-  for(int i=0; i<4; i++){
+  for(int i=0; i<IR_CNT; i++){
     gpio_put(ledPins[i], (leds&(1<<i))!=0);
   }
 }
@@ -91,11 +99,11 @@ void setLeds(uint8_t leds){
 uint8_t filterReadIR(){
   static const int firstDelay = 1000;
   static const int otherDelay = 250;
-  static uint32_t lastActivation[4]= {0};
-  static bool isFirstActivation[4] = {false};
+  static uint32_t lastActivation[IR_CNT]= {0};
+  static bool isFirstActivation[IR_CNT] = {false};
   static bool isInit = false;
   if(!isInit){
-    for(int i=0; i<4; i++){
+    for(int i=0; i<IR_CNT; i++){
       isFirstActivation[i] = true;
       lastActivation[i] = 0;
     }
@@ -170,13 +178,13 @@ uint32_t commonKeyboardRead(){
     }
   }
   uint8_t hwIr = filterReadIR();
-  if(hwIr&(1<<0)){
-    ret |= Menu::BTN_RIGHT;
-  }
-  if(hwIr&(1<<3)){
+  if(hwIr&(1<<2)){
     ret |= Menu::BTN_LEFT;
   }
-  if(hwIr&(3<<1)){
+  if(hwIr&(1<<1)){
+    ret |= Menu::BTN_RIGHT;
+  }
+  if(hwIr&(1<<0)){
     ret |= Menu::BTN_OK;
   }
   return ret;
@@ -216,13 +224,13 @@ uint32_t commonMenuRead(){
     }
   }
   uint8_t hwIr = filterReadIR();
-  if(hwIr&(1<<0)){
+  if(hwIr&(1<<2)){
     ret |= Menu::BTN_UP;
   }
-  if(hwIr&(1<<3)){
+  if(hwIr&(1<<1)){
     ret |= Menu::BTN_DOWN;
   }
-  if(hwIr&(3<<1)){
+  if(hwIr&(1<<0)){
     ret |= Menu::BTN_OK;
   }
   return ret;
@@ -262,13 +270,13 @@ uint32_t commonConfirm(){
     }
   }
   uint8_t hwIr = filterReadIR();
-  if(hwIr&(1<<0)){
+  if(hwIr&(1<<2)){
     ret |= Menu::BTN_LEFT;
   }
-  if(hwIr&(1<<3)){
+  if(hwIr&(1<<1)){
     ret |= Menu::BTN_RIGHT;
   }
-  if(hwIr&(3<<1)){
+  if(hwIr&(1<<0)){
     ret |= Menu::BTN_OK;
   }
   return ret;
@@ -283,13 +291,13 @@ uint32_t phyConfirm(){
   while(queue_try_remove(&usbCDCinputQueue, &cdc));
 
   uint8_t hwIr = filterReadIR();
-  if(hwIr&(1<<0)){
-    ret |= Menu::BTN_LEFT;
-  }
-  if(hwIr&(1<<3)){
+  if(hwIr&(1<<2)){
     ret |= Menu::BTN_RIGHT;
   }
-  if(hwIr&(3<<1)){
+  if(hwIr&(1<<1)){
+    ret |= Menu::BTN_LEFT;
+  }
+  if(hwIr&(1<<0)){
     ret |= Menu::BTN_OK;
   }
 
@@ -587,7 +595,7 @@ void subMenuExtras(){
                     writer.print(16,10,"Firmware ativo");
                     writer.print(16,20,"Esperando...");
                     display.display();
-                    reset_usb_boot(1<<ledPins[3], 0);
+                    reset_usb_boot(1<<ledPins[2], 0);
                 }
             }
         } else if(idx==2){
@@ -688,7 +696,7 @@ int main(void) {
   gpio_set_pulls(9, true, false);
   gpio_set_pulls(12, true, false);
 
-  for(int i=0; i<4; i++){
+  for(int i=0; i<IR_CNT; i++){
     gpio_init(ledPins[i]);
     gpio_set_dir(ledPins[i], GPIO_OUT);
     gpio_put(ledPins[i], false);
@@ -702,35 +710,54 @@ int main(void) {
   queue_init(&usbCDCinputQueue, 1, 64);
   multicore_launch_core1(core1_entry);
 
-  gpio_put(ledPins[1], true);  
+  gpio_put(ledPins[1], true);
 
-  if(!display.init(9, 12, 0)){
-    while(1){
+  if(!display.init(8, 5, 4, 0)){
+    for(int i=0; i<15; i++){
       gpio_put(ledPins[2], true);
       sleep_ms(300);
       gpio_put(ledPins[2], false);
       sleep_ms(300);
     }
+      reset_usb_boot(1<<ledPins[2], 0);
   };
 
   gpio_put(ledPins[2], true);  
 
   display.clear();
-  writer.print(32,0,"LCD ok");
-  writer.print(32,10,"Inicializando");
-  writer.print(32,20,"  Memoria... ");
+  writer.print(0,0,"LCD ok");
+  writer.print(0,10,"Inicializando");
+  writer.print(0,20,"  Memoria... ");
   if (!display.display()) {
-      while(1){
+      for(int i=0; i<15; i++){
         gpio_put(ledPins[2], true);
         sleep_ms(100);
         gpio_put(ledPins[2], false);
         sleep_ms(100);
       }
+        reset_usb_boot(1<<ledPins[2], 0);
   }
-
-  Pers::get();
+/*
+  for(int i=0; i<40; i++){
+    for(int j=0; j<72; j++){
+      display.clear();
+      display.setPixel(j,i,Sprite::WHITE);
+      display.display();
+      sleep_ms(200);
+    }
+  }
+*//*
+  sleep_ms(1000);display.display();
+  sendHID("h");
+  sleep_ms(1000);display.display();
+  sendHID("i");
+  sleep_ms(1000);display.display();
+  sendHID("j");
+  sleep_ms(10000);
   
-  gpio_put(ledPins[3], true);  
+  reset_usb_boot(1<<ledPins[2], 0); //      TODO TODO TODO TODO
+  */
+  Pers::get();
 
   display.clear();
   writer.print(0,0,"LCD ok, MEM ok");
@@ -740,16 +767,16 @@ int main(void) {
 
   {
     uint32_t seed = 0xA0A0A0A0 + Pers::get().getCombinedId();
-    uint8_t darkCheck=0, brightCheck=0, fullCheck=(1<<4)-1;
+    uint8_t darkCheck=0, brightCheck=0, fullCheck=(1<<IR_CNT)-1;
     while(1){
-      uint16_t dark[4], bright[4];
+      uint16_t dark[IR_CNT], bright[IR_CNT];
       readRawAnalogInputs(dark, bright);
       uint8_t current = interpretRawIR(dark, bright);
       setLeds(current);
 
-      for(int i=0; i<4; i++){
+      for(int i=0; i<IR_CNT; i++){
         seed += dark[i]<<(i*8);
-        seed += bright[i]<<(i*8+4);
+        seed += bright[i]<<(i*8+IR_CNT);
       }
 
       darkCheck |= (~current)&fullCheck;

@@ -15,10 +15,10 @@ public:
     static const uint32_t BTN_OK=(1<<14);
     
     // Can use every input (CHR, UP, DOWN, LEFT, RIGHT, OK, CANCEL)
-    static bool getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str, unsigned maxsize);
+    static bool getString(SSD1306& screen, uint32_t (*input)(void), char* str, unsigned maxsize);
     // Uses LEFT, RIGHT, OK and CANCEL (false on cancel)
-    static bool confirm(SSD1306_128x32& screen, uint32_t (*input)(void), const char* str0, const char* str1);
+    static bool confirm(SSD1306& screen, uint32_t (*input)(void), const char* str0, const char* str1);
     // Uses UP, DOWN, OK and CANCEL (min-1 on cancel)
-    static int intRead(SSD1306_128x32& screen, uint32_t (*input)(void), int val, int min, int max, const char* descr);
-    static int genericList(SSD1306_128x32& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem=0);
+    static int intRead(SSD1306& screen, uint32_t (*input)(void), int val, int min, int max, const char* descr);
+    static int genericList(SSD1306& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem=0);
 };

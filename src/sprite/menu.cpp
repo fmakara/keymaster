@@ -13,7 +13,7 @@
 #define MENUSTR_BACK      0x04
 #define MENUSTR_SHOW      0x05
 
-bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str, unsigned maxsize){
+bool Menu::getString(SSD1306& screen, uint32_t (*input)(void), char* str, unsigned maxsize){
     static const std::vector<std::string> menulists = {
         "\x01" "abcdefghijkl" "\x01" "mnopqrstuvwxyz",
         "\x01" "ABCDEFGHIJKL" "\x01" "MNOPQRSTUVWXYZ",
@@ -80,7 +80,7 @@ bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str,
             } else if(menulists[line][col]==MENUSTR_BACK) {
                 if(len>0) len--;
             } else if (menulists[line][col]==MENUSTR_SHOW) {
-                int initialDelta = 100;
+                int initialDelta = screen.width()-25;
                 read = (*input)();
                 while(!read){
                     read = (*input)();
@@ -145,7 +145,7 @@ bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str,
         screen.clear();
         uint8_t blink = (to_ms_since_boot(get_absolute_time())/500)&1;
         screen.copy(cursor[blink], 100, 1);
-        int xpos = 100-8;
+        int xpos = screen.width()-35; // 100-8;
         for(int i=0; i<len && xpos>-6; i++){
             writer.putch(xpos, 1, str[len-i-1]);
             xpos -= 7;
@@ -155,12 +155,12 @@ bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str,
         if(centericon>=' '){
             auto& sprite = Dict8::charlist[centericon-' '];
             centerwidth = sprite.width();
-            centeroff = 64-(centerwidth/2);
+            centeroff = screen.width()/2-(centerwidth/2);
             screen.copy(sprite, centeroff, 16);
         } else {
             auto& sprite = specials[centericon];
             centerwidth = sprite.width();
-            centeroff = 64-(centerwidth/2);
+            centeroff = screen.width()/2-(centerwidth/2);
             screen.copy(sprite, centeroff, 16);
         }
 
@@ -169,7 +169,7 @@ bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str,
 
         xpos = centeroff+centerwidth+16;
         int colinc = col;
-        while(xpos<128){
+        while(xpos<screen.width()){
             colinc = (colinc+1)%menulists[line].size();
             uint8_t width, icon = menulists[line][colinc];
             if(icon>=' '){
@@ -204,7 +204,7 @@ bool Menu::getString(SSD1306_128x32& screen, uint32_t (*input)(void), char* str,
     }
 }
 
-bool Menu::confirm(SSD1306_128x32& screen, uint32_t (*input)(void), const char* str0, const char* str1){
+bool Menu::confirm(SSD1306& screen, uint32_t (*input)(void), const char* str0, const char* str1){
     Dict8 writer(&screen);
     int opt = 0;
     while(true){
@@ -221,28 +221,51 @@ bool Menu::confirm(SSD1306_128x32& screen, uint32_t (*input)(void), const char* 
         screen.clear();
         if(str0){
             int len = strlen(str0);
-            int off = 64-(len*7)/2;
+            int off = screen.width()/2-(len*7)/2;
             if(off<0) off=0;
             writer.print(off,0,str0);
         }
         if(str1){
             int len = strlen(str1);
-            int off = 64-(len*7)/2;
+            int off = screen.width()/2-(len*7)/2;
             if(off<0) off=0;
             writer.print(off,10,str1);
         }
-        if(opt==0){
-            writer.print(10,20," Sim  < >   Nao ");
-        } else if(opt>0){
-            writer.print(10,20,"<Sim>       Nao ");
+        if(screen.width()>83){
+            if(opt==0){
+                writer.print((screen.width()-83)/2,20," Sim <> Nao ");
+            } else if(opt>0){
+                writer.print((screen.width()-83)/2,20,"<Sim>   Nao ");
+            } else {
+                writer.print((screen.width()-83)/2,20," Sim   <Nao>");
+            }
         } else {
-            writer.print(10,20," Sim       <Nao>");
+            if(opt==0){
+                writer.print((screen.width()-70)/2,20," Sim<>Nao ");
+            } else if(opt>0){
+                writer.print((screen.width()-70)/2,20,"<Sim> Nao ");
+            } else {
+                writer.print((screen.width()-70)/2,20," Sim <Nao>");
+            }
         }
         screen.display();
     }
 }
 
-int Menu::intRead(SSD1306_128x32& screen, uint32_t (*input)(void), int val, int min, int max, const char* descr){
+static int pow10(int val){
+    if(val<0) val=-val;
+    if(val<10) return 1;
+    if(val<100) return 2;
+    if(val<1000) return 3;
+    if(val<10000) return 4;
+    if(val<100000) return 5;
+    if(val<1000000) return 6;
+    if(val<10000000) return 7;
+    if(val<100000000) return 8;
+    if(val<1000000000) return 9;
+    return 10;
+}
+int Menu::intRead(SSD1306& screen, uint32_t (*input)(void), int val, int min, int max, const char* descr){
     Dict8 writer(&screen);
     while(true){
         rand();
@@ -261,27 +284,28 @@ int Menu::intRead(SSD1306_128x32& screen, uint32_t (*input)(void), int val, int 
         screen.clear();
         if(descr){
             int len = strlen(descr);
-            int off = 64-(len*7)/2;
+            int off = (screen.width()-(len*7))/2;
             if(off<0) off=0;
             writer.print(off,0,descr);
         }
+        int off = (screen.width()-((pow10(val)+4*7)))/2;
         if(val==min){
-            writer.print(40,16,"  %d >", val);
+            writer.print(off, 16,"  %d >", val);
         } else if(val==max){
-            writer.print(40,16,"< %d  ", val);
+            writer.print(off, 16,"< %d  ", val);
         } else {
-            writer.print(40,16,"< %d >", val);
+            writer.print(off, 16,"< %d >", val);
         }
         screen.display();
     }
 }
 
-int Menu::genericList(SSD1306_128x32& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem){
+int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem){
     Dict8 writer(&screen);
     int idx = startingItem;
     int sm = 0;
     if(items.size()==0) return 0;
-    if(items.size()<=4) {
+    if(items.size()<=(screen.height()/8)) {
         while(true){
             rand();
             uint32_t read = (*input)();
@@ -301,7 +325,7 @@ int Menu::genericList(SSD1306_128x32& screen, uint32_t (*input)(void), const std
                 if(i==idx){
                     if(sm<100) {
                         int endpos = writer.print(8,i*8,"%s",items[i].c_str());
-                        if(endpos<128) sm = 0;
+                        if(endpos<screen.width()) sm = 0;
                     } else {
                         int endpos = writer.print(108-sm,i*8,"%s",items[i].c_str());
                         if(endpos<5) sm = 0;
@@ -323,20 +347,54 @@ int Menu::genericList(SSD1306_128x32& screen, uint32_t (*input)(void), const std
         if(read&BTN_CANCEL){
             return -1;
         }
-        if(read&BTN_UP) idx = (idx+items.size()-1)%items.size();
-        if(read&BTN_DOWN) idx = (idx+1)%items.size();
+        if(read&BTN_UP) {
+            for(int k=0; k<8; k++){
+                screen.clear();
+                writer.print(0,9,">");
+                for(int i=2; i<(screen.height()/8); i++){
+                    int j = (idx+i-1+items.size())%items.size();
+                    writer.print(0,i*9+k,"%s",items[j].c_str());
+                }
+                int j = (idx-1+items.size())%items.size();
+                writer.print(k,k,"%s",items[j].c_str());
+                j = (idx+items.size())%items.size();
+                writer.print(8-k,9+k,"%s",items[j].c_str());
+                screen.display();
+                (*input)();
+            }
+            idx = (idx+items.size()-1)%items.size();
+        }
+        if(read&BTN_DOWN) {
+            for(int k=0; k<8; k++){
+                screen.clear();
+                writer.print(0,9,">");
+                for(int i=3; i<(screen.height()/8); i++){
+                    int j = (idx+i-1+items.size())%items.size();
+                    writer.print(0,i*9-k,"%s",items[j].c_str());
+                }
+                int j = (idx-1+items.size())%items.size();
+                writer.print(0,-k,"%s",items[j].c_str());
+                j = (idx+items.size())%items.size();
+                writer.print(8-k,9-k,"%s",items[j].c_str());
+                j = (idx+1+items.size())%items.size();
+                writer.print(k,18-k,"%s",items[j].c_str());
+                screen.display();
+                (*input)();
+            }
+            idx = (idx+1)%items.size();
+        }
         if(read) sm = 0;
         sm++;
 
         screen.clear();
-        for(int i=0; i<4; i++){
+        for(int i=0; i<(screen.height()/8); i++){
             if(i==1) continue;
             int j = (idx+i-1+items.size())%items.size();
-            writer.print(3,i*9,"%s",items[j].c_str());
+            writer.print(0,i*9,"%s",items[j].c_str());
         }
         if(sm<100) {
             int endpos = writer.print(8,9,"%s",items[idx].c_str());
-            if(endpos<128) sm = 0;
+            if(endpos<screen.width()) sm = 0;
         } else {
             int endpos = writer.print(108-sm,9,"%s",items[idx].c_str());
             if(endpos<5) sm = 0;

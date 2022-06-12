@@ -110,7 +110,7 @@ bool SSD1306_128x64::sendList(uint8_t header, const uint8_t *c, int len){
 }
 
 SSD1306_128x64::SSD1306_128x64()
-    : Sprite(WIDTH, HEIGHT, HEIGHT/8, (uint8_t*)buffer, false)
+    : SSD1306(WIDTH, HEIGHT, (uint8_t*)buffer)
     , initok(false)
 {
     clear();
@@ -173,7 +173,7 @@ bool SSD1306_128x32::sendList(uint8_t header, const uint8_t *c, int len){
 }
 
 SSD1306_128x32::SSD1306_128x32()
-    : Sprite(WIDTH, HEIGHT, HEIGHT/8, (uint8_t*)buffer, false)
+    : SSD1306(WIDTH, HEIGHT, (uint8_t*)buffer)
     , initok(false)
 {
     clear();
@@ -214,3 +214,141 @@ bool SSD1306_128x32::init(int scl, int sda, int inst, bool _init){
     initok = true;
     return true;
 }
+
+SSD1306_72x40::SSD1306_72x40()
+    : SSD1306(WIDTH, HEIGHT, (uint8_t*)buffer)
+    , initok(false)
+{
+    clear();
+}
+
+void SSD1306_72x40::clear(){
+    memset(buffer, 0x00, sizeof(buffer));
+}
+
+bool SSD1306_72x40::display(){
+    if(!initok) return false;
+    for(int page=0; page<HEIGHT/8; page++){
+        sendCmd(0xB0+page);
+        sendCmd(0x0C);
+        sendCmd(0x11);
+        /*
+        uint8_t data[WIDTH];
+        for(int i=0; i<WIDTH; i++){
+            data[i] = buffer[page+i*(HEIGHT/8)];
+        }
+        sendList(0x40, data, WIDTH);
+        */
+        for(int i=0; i<WIDTH; i++){
+            sendList(0x40, buffer+page+i*(HEIGHT/8), 1);
+        }
+    }
+    return true;
+}
+
+bool SSD1306_72x40::init(int reset, int scl, int sda, int inst, bool _init){
+    instance = inst;
+    if(_init){
+        i2c_init(I2C, 400 * 1000);
+        gpio_set_function(sda, GPIO_FUNC_I2C);
+        gpio_set_function(scl, GPIO_FUNC_I2C);
+        gpio_pull_up(sda);
+        gpio_pull_up(scl);
+    }
+    gpio_init(reset);
+    gpio_set_dir(reset, true);
+    gpio_put(reset, false);
+    sleep_ms(100);
+    gpio_put(reset, true);
+    sleep_ms(100);
+
+    static const uint8_t SSD1306_72x40_init[] = {
+        SSD1306_DISPLAYOFF,         // 0xAE
+        SSD1306_SETDISPLAYCLOCKDIV, // 0xD5
+        0x80,                       // the suggested ratio 0xF0
+        SSD1306_SETMULTIPLEX,       // 0xA8
+        0x27,                       // recommended ratio 0x27 -> height-1
+        SSD1306_SETDISPLAYOFFSET,   // 0xD3
+        0x00,                       // recommended 0x00
+        0xAD,                       // Internal IREF
+        0x30,                       // settingj
+        SSD1306_CHARGEPUMP,         // 0x8D
+        0x14,                       // recommended 0x14 for internal DC-DC
+        SSD1306_SETSTARTLINE,       // 0x40
+        SSD1306_NORMALDISPLAY,      // 0xA6
+        SSD1306_DISPLAYALLON_RESUME,// 0xA4
+        SSD1306_SEGREMAP | 0x1,     // 0xA1 // remap 128 to 0
+        SSD1306_COMSCANDEC,         // 0xC8
+        SSD1306_SETCOMPINS,         // 0xDA
+        0x12,                       // Recommended 0x12
+        SSD1306_SETCONTRAST,        // 0x81
+        0xAF,                       // recommended 0x2F
+        SSD1306_SETPRECHARGE,       // 0xD9
+        0x22,                       // recommended 0x22
+        SSD1306_SETVCOMDETECT,      // 0xDB
+        0x20,                       // recommended 0x20
+    };
+
+    if(!sendList(0, SSD1306_72x40_init, sizeof(SSD1306_72x40_init))) return false;
+    // for(int i=0; i<sizeof(SSD1306_72x40_init); i++)sendCmd(SSD1306_72x40_init[i]);
+    sleep_ms(100);
+    if(!sendCmd(SSD1306_DISPLAYON)) return false; // 0xAF
+    sleep_ms(100);
+    initok = true;
+    return true;
+}
+
+bool SSD1306_72x40::sendList(uint8_t header, const uint8_t *c, int len){
+    uint8_t list[520];
+    int lensent = 0;
+    while(lensent<len){
+        const int IIC_WRITE_BUFFER_MAX = 64;
+        int currSize = (lensent+IIC_WRITE_BUFFER_MAX<len+1) ? IIC_WRITE_BUFFER_MAX : (len+1-lensent);
+        memcpy(list+1, c+lensent, currSize-1);
+        list[0] = header;
+        //int retcode = i2c_write_timeout_per_char_us(I2C, ADDR, list, len-lensent+1, false, 50000);
+        int retcode = i2c_write_blocking(I2C, ADDR, list, currSize, false);
+        if(retcode<0)return false;
+        lensent += retcode-1;
+    }
+    return lensent==len;
+}
+
+bool SSD1306_72x40::sendCmd(uint8_t cmd){
+    return sendList(0, &cmd, 1);
+}
+
+SSD1306::SSD1306(uint16_t w, uint16_t h, uint8_t* b) : Sprite(w, h, (h+7)/8, b, false){}
+
+
+/*
+static const uint8_t SSD1306_72x40_init[] = {
+        SSD1306_DISPLAYOFF,         // 0xAE
+        SSD1306_SETDISPLAYCLOCKDIV, // 0xD5
+        0xF0,                       // the suggested ratio 0xF0
+        SSD1306_SETMULTIPLEX,       // 0xA8
+        0x27,                       // recommended ratio 0x27 -> height-1
+        SSD1306_SETDISPLAYOFFSET,   // 0xD3
+        0x00,                       // recommended 0x00
+        SSD1306_SETSTARTLINE,       // 0x40
+        SSD1306_CHARGEPUMP,         // 0x8D
+        0x14,                       // recommended 0x14 for internal DC-DC
+        SSD1306_MEMORYMODE,         // 0x20
+        0x01,                       // 0x0 Vertical adressing
+        SSD1306_SEGREMAP | 0x1,     // 0xA1
+        0xC0,                       // SSD1306_COMSCANDEC?
+        // 0xA1,                       // Segment remap 0xA1
+        // SSD1306_COMSCANDEC,         // 0xC8
+        SSD1306_SETCOMPINS,         // 0xDA
+        0x12,                       // Recommended 0x12
+        SSD1306_SETCONTRAST,        // 0x81
+        0x2F,                       // recommended 0x2F
+        SSD1306_SETPRECHARGE,       // 0xD9
+        0xF1,                       // recommended 0x22
+        SSD1306_SETVCOMDETECT,      // 0xDB
+        0x20,                       // recommended 0x20
+        SSD1306_DISPLAYALLON_RESUME,// 0xA4
+        SSD1306_NORMALDISPLAY,      // 0x
+        SSD1306_DEACTIVATE_SCROLL,  // 0x
+    };
+    */
