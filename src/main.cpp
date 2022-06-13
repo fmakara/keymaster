@@ -1,6 +1,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include <list>
 #include <string>
 #include <vector>
@@ -9,10 +10,12 @@
 #include "pico/util/queue.h"
 #include "pico/bootrom.h"
 #include "hardware/adc.h"
+#include "hardware/pio.h"
 
 #include "bsp/board.h"
 #include "tusb.h"
 #include "usb/usb_descriptors.h"
+#include "pio_pwm.pio.h"
 
 #include "display/ssd1306.h"
 #include "sprite/dict8.h"
@@ -77,6 +80,38 @@ uint8_t interpretRawIR(uint16_t* dark, uint16_t* bright){
   return ret;
 }
 
+void turnOffPWM(){
+  for(int i=0; i<IR_CNT; i++){
+    pio_sm_set_enabled(pio0, i, false);
+    gpio_init(ledPins[i]);
+  }
+}
+
+uint8_t filterInputsAndPWM(uint8_t inputs){
+  static const uint8_t CNTS[IR_CNT] = {15, 10, 10};
+  static const uint8_t RETS[IR_CNT] = {16, 5, 5};
+  static uint8_t ledCounters[IR_CNT] = {0};
+  uint8_t outputs = 0;
+  for(int i=0; i<IR_CNT; i++){
+    if( ((inputs>>i)&1)==0 ){
+      ledCounters[i] = 0;
+    } else if(ledCounters[i]<CNTS[i]){
+      ledCounters[i]++;
+    }
+    uint32_t pwmLev = (64*(uint16_t)ledCounters[i])/CNTS[i];
+    if(pwmLev>100)pwmLev = 100;
+    if(ledCounters[i]==CNTS[i]){
+      outputs |= 1<<i;
+      ledCounters[i] = RETS[i];
+    }
+    // setup PWM
+    pio_gpio_init(pio0, ledPins[i]);
+    pio_sm_set_enabled(pio0, i, true);
+    pio_sm_put_blocking(pio0, i, pwmLev);
+  }
+  return outputs;
+}
+
 uint8_t readIR(){
   uint16_t dark[IR_CNT], bright[IR_CNT];
   readRawAnalogInputs(dark, bright);
@@ -87,7 +122,7 @@ uint8_t readIR(){
   randAcc ^= randAcc>>4;
   randAcc &= 0xF;
   for(int i=0; i<randAcc; i++) rand();
-  return interpretRawIR(dark, bright);
+  return filterInputsAndPWM(interpretRawIR(dark, bright));
 }
 
 void setLeds(uint8_t leds){
@@ -737,26 +772,6 @@ int main(void) {
       }
         reset_usb_boot(1<<ledPins[2], 0);
   }
-/*
-  for(int i=0; i<40; i++){
-    for(int j=0; j<72; j++){
-      display.clear();
-      display.setPixel(j,i,Sprite::WHITE);
-      display.display();
-      sleep_ms(200);
-    }
-  }
-*//*
-  sleep_ms(1000);display.display();
-  sendHID("h");
-  sleep_ms(1000);display.display();
-  sendHID("i");
-  sleep_ms(1000);display.display();
-  sendHID("j");
-  sleep_ms(10000);
-  
-  reset_usb_boot(1<<ledPins[2], 0); //      TODO TODO TODO TODO
-  */
   Pers::get();
 
   display.clear();
@@ -786,6 +801,11 @@ int main(void) {
     }
 
     srand(seed);
+  }
+  uint offset = pio_add_program(pio0, &pwm_program);
+  for(int i=0; i<IR_CNT; i++){
+    pwm_program_init(pio0, i, offset, ledPins[i]);
+    pio_pwm_set_period(pio0, i, 64);
   }
 
   while (1) {

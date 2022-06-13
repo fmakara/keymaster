@@ -15,6 +15,7 @@ add_executable(keymaster
     src/sprite/menu.cpp
     src/pers/persistency.cpp
 )
+pico_generate_pio_header(keymaster  ${CMAKE_CURRENT_LIST_DIR}/src/pio_pwm.pio)
 
 target_include_directories(keymaster PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/src
@@ -25,6 +26,7 @@ target_link_libraries(keymaster
     hardware_i2c
     hardware_flash
     hardware_adc
+    hardware_pio
     pico_multicore
     tinyusb_device
     tinyusb_board
