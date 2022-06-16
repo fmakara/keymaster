@@ -204,7 +204,7 @@ bool Menu::getString(SSD1306& screen, uint32_t (*input)(void), char* str, unsign
     }
 }
 
-bool Menu::confirm(SSD1306& screen, uint32_t (*input)(void), const char* str0, const char* str1){
+bool Menu::confirm(SSD1306& screen, uint32_t (*input)(void), const std::vector<std::string>& strs){
     Dict8 writer(&screen);
     int opt = 0;
     while(true){
@@ -219,33 +219,28 @@ bool Menu::confirm(SSD1306& screen, uint32_t (*input)(void), const char* str0, c
         if(read&BTN_RIGHT) opt = -1;
 
         screen.clear();
-        if(str0){
-            int len = strlen(str0);
-            int off = screen.width()/2-(len*7)/2;
+        int offy = 0;
+        for(int i=0; i<strs.size(); i++){
+            int off = (screen.width()-strs[i].size()*7)/2;
             if(off<0) off=0;
-            writer.print(off,0,str0);
-        }
-        if(str1){
-            int len = strlen(str1);
-            int off = screen.width()/2-(len*7)/2;
-            if(off<0) off=0;
-            writer.print(off,10,str1);
+            writer.print(off,offy,strs[i].c_str());
+            offy += 10;
         }
         if(screen.width()>83){
             if(opt==0){
-                writer.print((screen.width()-83)/2,20," Sim <> Nao ");
+                writer.print((screen.width()-83)/2,offy," Sim <> Nao ");
             } else if(opt>0){
-                writer.print((screen.width()-83)/2,20,"<Sim>   Nao ");
+                writer.print((screen.width()-83)/2,offy,"<Sim>   Nao ");
             } else {
-                writer.print((screen.width()-83)/2,20," Sim   <Nao>");
+                writer.print((screen.width()-83)/2,offy," Sim   <Nao>");
             }
         } else {
             if(opt==0){
-                writer.print((screen.width()-70)/2,20," Sim<>Nao ");
+                writer.print((screen.width()-70)/2,offy," Sim<>Nao ");
             } else if(opt>0){
-                writer.print((screen.width()-70)/2,20,"<Sim> Nao ");
+                writer.print((screen.width()-70)/2,offy,"<Sim> Nao ");
             } else {
-                writer.print((screen.width()-70)/2,20," Sim <Nao>");
+                writer.print((screen.width()-70)/2,offy," Sim <Nao>");
             }
         }
         screen.display();

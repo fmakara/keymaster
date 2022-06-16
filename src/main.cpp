@@ -84,12 +84,14 @@ void turnOffPWM(){
   for(int i=0; i<IR_CNT; i++){
     pio_sm_set_enabled(pio0, i, false);
     gpio_init(ledPins[i]);
+    gpio_set_dir(ledPins[i], true);
+    gpio_put(ledPins[i], false);
   }
 }
 
 uint8_t filterInputsAndPWM(uint8_t inputs){
-  static const uint8_t CNTS[IR_CNT] = {15, 10, 10};
-  static const uint8_t RETS[IR_CNT] = {16, 5, 5};
+  static const uint8_t CNTS[IR_CNT] = {20, 15, 15};
+  static const uint8_t RETS[IR_CNT] = {21, 5, 5};
   static uint8_t ledCounters[IR_CNT] = {0};
   uint8_t outputs = 0;
   for(int i=0; i<IR_CNT; i++){
@@ -99,7 +101,7 @@ uint8_t filterInputsAndPWM(uint8_t inputs){
       ledCounters[i]++;
     }
     uint32_t pwmLev = (64*(uint16_t)ledCounters[i])/CNTS[i];
-    if(pwmLev>100)pwmLev = 100;
+    if(pwmLev>64)pwmLev = 64;
     if(ledCounters[i]==CNTS[i]){
       outputs |= 1<<i;
       ledCounters[i] = RETS[i];
@@ -132,48 +134,10 @@ void setLeds(uint8_t leds){
 }
 
 uint8_t filterReadIR(){
-  static const int firstDelay = 1000;
-  static const int otherDelay = 250;
-  static uint32_t lastActivation[IR_CNT]= {0};
-  static bool isFirstActivation[IR_CNT] = {false};
-  static bool isInit = false;
-  if(!isInit){
-    for(int i=0; i<IR_CNT; i++){
-      isFirstActivation[i] = true;
-      lastActivation[i] = 0;
-    }
-    isInit = true;
-  }
+  turnOffPWM();
   uint8_t act = readIR();
-  setLeds(act);
-  uint8_t ret = 0;
-  uint32_t now = board_millis();
-  for(int i=0; i<4; i++) {
-    if(act&(1<<i)){
-      if(lastActivation[i]==0){
-        ret |= 1<<i;
-        lastActivation[i] = now;
-        isFirstActivation[i] = true;
-      } else if(isFirstActivation[i]){
-        if(lastActivation[i]+firstDelay<now){
-          ret |= 1<<i;
-          lastActivation[i] = now;
-          isFirstActivation[i] = false;         
-        }
-      } else {
-        if(lastActivation[i]+otherDelay<now){
-          ret |= 1<<i;
-          lastActivation[i] = now;
-        }
-      }
-    } else {
-      lastActivation[i] = 0;
-      isFirstActivation[i] = true;
-    }
-  }
-  return ret;
+  return act;
 }
-
 
 uint32_t commonKeyboardRead(){
   uint32_t ret = 0;
@@ -321,7 +285,13 @@ uint32_t phyConfirm(){
   static uint8_t keepCheck = 0;
   uint32_t ret = 0;
   char evt;
-  while(queue_try_remove(&usbHIDEvtQueue, &evt));
+  if(queue_try_remove(&usbHIDEvtQueue, &evt)){
+    if(evt==EVT_NUMLOCK){
+      ret |= Menu::BTN_RIGHT;
+    } else if(evt==EVT_SCROLLLOCK){
+      ret |= Menu::BTN_LEFT;
+    }
+  }
   char cdc;
   while(queue_try_remove(&usbCDCinputQueue, &cdc));
 
@@ -359,28 +329,28 @@ void subMenuPass(int id){
         if(idx==0 || idx==1){
             // no action
         } else if(idx==2){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "UserName+TAB+Senha+Enter")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "UserName+TAB+", "+Senha+Enter"})){
                 sendHID(entry.username);
                 sendHID("\t");
                 sendHID(entry.pass);
                 sendHID("\n");
             }
         } else if(idx==3){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "UserName")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "UserName"})){
                 sendHID(entry.username);
             }
         } else if(idx==4){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "Senha+ENTER")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "Senha+ENTER"})){
                 sendHID(entry.pass);
                 sendHID("\n");
             }
         } else if(idx==5){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "Senha")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "Senha"})){
                 sendHID(entry.pass);
             }
         } else if(idx==7){
-            if(Menu::confirm(display, phyConfirm, "! Apagar mesmo?", entry.name)){
-                if(Menu::confirm(display, phyConfirm, "! Mesmo mesmo?", entry.name)){
+            if(Menu::confirm(display, phyConfirm, {"! Apagar mesmo?", entry.name})){
+                if(Menu::confirm(display, phyConfirm, {"! Mesmo mesmo?", entry.name})){
                     if (Pers::get().eraseEntry(id)){
                         return;
                     } else {
@@ -388,10 +358,6 @@ void subMenuPass(int id){
                         writer.print(32,10,"Algo deu errado");
                         display.display();
                         sleep_ms(1000); // TODO!
-                        //do {
-                        //    scroll.read();
-                        //    display.display();
-                        //} while(!scroll.isHeld());
                     }
                 }
             }
@@ -427,7 +393,7 @@ bool submenuGerarSenha(char* senha){
             menuList[0] = tempStr;
 
         } else if(idx==1){
-            useLowercase = Menu::confirm(display, commonConfirm, NULL, "Usar Minusculas?");
+            useLowercase = Menu::confirm(display, commonConfirm, {"", "Usar Minusculas?"});
             sprintf(tempStr, "Usar Min.: %s", useLowercase?"sim":"nao");
             menuList[1] = tempStr;
         } else if(idx==2){
@@ -436,7 +402,7 @@ bool submenuGerarSenha(char* senha){
             menuList[2] = tempStr;
 
         } else if(idx==3){
-            useUppercase = Menu::confirm(display, commonConfirm, NULL, "Usar Maiuscula?");
+            useUppercase = Menu::confirm(display, commonConfirm, {"", "Usar Maiuscula?"});
             sprintf(tempStr, "Usar Mai.: %s", useUppercase?"sim":"nao");
             menuList[3] = tempStr;
         } else if(idx==4){
@@ -445,7 +411,7 @@ bool submenuGerarSenha(char* senha){
             menuList[4] = tempStr;
 
         } else if(idx==5){
-            useNumeric = Menu::confirm(display, commonConfirm, NULL, "Usar Numeros?");
+            useNumeric = Menu::confirm(display, commonConfirm, {"", "Usar Numeros?"});
             sprintf(tempStr, "Usar Num.: %s", useNumeric?"sim":"nao");
             menuList[5] = tempStr;
         } else if(idx==6){
@@ -454,7 +420,7 @@ bool submenuGerarSenha(char* senha){
             menuList[6] = tempStr;
 
         } else if(idx==7){
-            useSymbol = Menu::confirm(display, commonConfirm, NULL, "Usar Simbolos?");
+            useSymbol = Menu::confirm(display, commonConfirm, {"", "Usar Simbolos?"});
             sprintf(tempStr, "Usar Simb.: %s", useSymbol?"sim":"nao");
             menuList[7] = tempStr;
         } else if(idx==8){
@@ -470,17 +436,12 @@ bool submenuGerarSenha(char* senha){
             if(useSymbol)mincount+=minSymbol;
             if(mincount>passlen){
                 display.clear();
-                writer.print(0,0, "  Erro: contagem  ");
-                writer.print(0,10,"   minima alta");
-                writer.print(0,20,"     demais");
+                writer.print(0,0, "Erro: contagem");
+                writer.print(0,10," minima alta");
+                writer.print(0,20,"   demais");
                 display.display();
                 sleep_ms(1000); // TODO
-                // scroll.read();
-                // while(!scroll.isHeld()){
-                //     scroll.read();
-                //     Menu::drawPins(display, scroll);
-                //     display.display();
-                // }
+
             }
             for(int i=0; i<=passlen; i++) senha[i] = 0;
             int emptyChars = passlen;
@@ -584,26 +545,21 @@ void subMenuAdicionar(){
                 menuList[2] = tempStr;
             }
         } else if(idx==4){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "UserName")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "UserName"})){
                 sendHID(entry.username);
             }
         } else if(idx==5){
-            if(Menu::confirm(display, phyConfirm, "! Confirmar digitar", "Senha")){
+            if(Menu::confirm(display, phyConfirm, {"! Confirmar digitar", "Senha"})){
                 sendHID(entry.pass);
             }
         } else if(idx==7){
-            if(Menu::confirm(display, phyConfirm, "! Adicionar mesmo?", entry.name)){
+            if(Menu::confirm(display, phyConfirm, {"! Adicionar mesmo?", entry.name})){
                 if(!Pers::get().appendEntry(entry)){
                     display.clear();
                     writer.print(32,10,"Erro adicionando");
                     display.display();
                     sleep_ms(1000);
-                    //scroll.read();
-                    //while(!scroll.isHeld()){
-                    //    scroll.read();
-                    //    Menu::drawPins(display, scroll);
-                    //    display.display();
-                    //}
+
                 }
                 return;
             }
@@ -623,19 +579,19 @@ void subMenuExtras(){
     while(true){
         int idx = Menu::genericList(display, commonMenuRead, menuList, 0);
         if(idx==1){
-            if(Menu::confirm(display, phyConfirm, "! Trocar mesmo", "o firmware?")){
-                if(!Menu::confirm(display, phyConfirm, "! Nao tem como con-", "vencer contrario?")){
+            if(Menu::confirm(display, phyConfirm, {"! Trocar mesmo", "o firmware?"})){
+                if(!Menu::confirm(display, phyConfirm, {"! Nao tem como", " convencer", "contrario?"})){
                     display.clear();
-                    writer.print(16,0, "Modo Update de");
-                    writer.print(16,10,"Firmware ativo");
-                    writer.print(16,20,"Esperando...");
+                    writer.print(16,0, "Update de");
+                    writer.print(16,10,"Firmware");
+                    writer.print(16,20,"Ativo");
                     display.display();
                     reset_usb_boot(1<<ledPins[2], 0);
                 }
             }
         } else if(idx==2){
-            if(Menu::confirm(display, phyConfirm, "! Despejar mesmo", "todos os dados?")){
-                if(!Menu::confirm(display, phyConfirm, "! Nao tem como con-", "vencer contrario?")){
+            if(Menu::confirm(display, phyConfirm, {"! Despejar mesmo", "todos os dados?"})){
+                if(!Menu::confirm(display, phyConfirm, {"! Nao tem como", "convencer", "contrario?"})){
                     Pers::PassEntry entry;
                     display.clear();
                     writer.print(32,0, "Enviando");
@@ -673,7 +629,7 @@ void mainLoop() {
         idx = Menu::genericList(display, commonMenuRead, menuList);
     }
     if(idx==0){
-        if(Menu::confirm(display, phyConfirm, "! Entrar mesmo", "em extras?")){
+        if(Menu::confirm(display, phyConfirm, {"! Entrar mesmo", "em extras?"})){
             subMenuExtras();
         } else {
             idx=1;
@@ -754,7 +710,6 @@ int main(void) {
       gpio_put(ledPins[2], false);
       sleep_ms(300);
     }
-      reset_usb_boot(1<<ledPins[2], 0);
   };
 
   gpio_put(ledPins[2], true);  
@@ -770,7 +725,6 @@ int main(void) {
         gpio_put(ledPins[2], false);
         sleep_ms(100);
       }
-        reset_usb_boot(1<<ledPins[2], 0);
   }
   Pers::get();
 
