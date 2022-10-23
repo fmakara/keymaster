@@ -569,23 +569,40 @@ void subMenuAdicionar(){
 void subMenuExtras(){
     std::vector<std::string> menuList = {
         "Voltar",
-        "Reboot p/ regravar",
+        "Mudar PIN",
+        "FW Update",
         "Despejar dados",
     };
     while (true){
         int idx = Menu::genericList(display, commonMenuRead, menuList, 0);
         if (idx == 1){
-            if (Menu::confirm(display, phyConfirm, {"! Trocar mesmo", "o firmware?"})){
-                if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", " convencer", "contrario?"})){
+            Pers::MainData data;
+            Pers::get().readMain(data);
+            Menu::pinReader(display, commonConfirm, data.pin, 4);
+            std::string npinstr(4, '0');
+            for(int i=0; i<4; i++)npinstr[i] = '0'+data.pin[i];
+            if (Menu::confirm(display, phyConfirm, {"! Salvar", "PIN novo?", npinstr})){
+                display.clear();
+                writer.print(0, 10, "Gravando");
+                display.display();
+                Pers::get().replaceMain(data);
+                display.clear();
+                writer.print(16, 10, "Feito!");
+                display.display();
+                sleep_ms(500);
+            }
+        }else if (idx == 2){
+            //if (Menu::confirm(display, phyConfirm, {"! Trocar mesmo", "o firmware?"})){
+            //    if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", " convencer", "contrario?"})){
                     display.clear();
                     writer.print(16, 0, "Update de");
                     writer.print(16, 10, "Firmware");
                     writer.print(16, 20, "Ativo");
                     display.display();
                     reset_usb_boot(1 << ledPins[2], 0);
-                }
-            }
-        }else if (idx == 2){
+            //    }
+            //}
+        }else if (idx == 3){
             if (Menu::confirm(display, phyConfirm, {"! Despejar mesmo", "todos os dados?"})){
                 if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", "convencer", "contrario?"})){
                     Pers::PassEntry entry;
@@ -660,7 +677,12 @@ void core1_entry(){
                 uint8_t modifier = 0;
                 if (ascii2keycode[chr][0]) modifier = KEYBOARD_MODIFIER_LEFTSHIFT;
                 keycode[0] = ascii2keycode[chr][1];
-                tud_hid_keyboard_report(0, modifier, keycode);
+                static char lastchr = 0;
+                if(chr==lastchr){
+                    while(!tud_hid_keyboard_report(0, modifier, NULL)) tud_task();
+                }
+                while(!tud_hid_keyboard_report(0, modifier, keycode)) tud_task();
+                lastchr = chr;
             }else{
                 tud_hid_keyboard_report(0, 0, NULL);
             }
@@ -677,7 +699,17 @@ void core1_entry(){
     }
 }
 
+void shuffleSeed(uint32_t *seed){
+    uint16_t dark[IR_CNT], bright[IR_CNT];
+    readRawAnalogInputs(dark, bright);
+    for (int i = 0; i < IR_CNT; i++){
+        *seed += dark[i] << (i * 8);
+        *seed += bright[i] << (i * 8 + IR_CNT);
+    }
+}
+
 int main(void){
+    uint32_t seed = 0xA0A0A0A0 + Pers::get().getCombinedId();
     board_init();
     adc_init();
     for (int i = 8; i <= 15; i++) gpio_set_pulls(i, false, false);
@@ -691,6 +723,7 @@ int main(void){
         gpio_set_pulls(ledPins[i], false, false);
         adc_gpio_init(adcPins[i]);
     }
+    shuffleSeed(&seed);
     gpio_put(ledPins[0], true);
 
     queue_init(&usbHIDKeyQueue, 1, 512);
@@ -698,6 +731,7 @@ int main(void){
     queue_init(&usbCDCinputQueue, 1, 64);
     multicore_launch_core1(core1_entry);
 
+    shuffleSeed(&seed);
     gpio_put(ledPins[1], true);
 
     if (!display.init(8, 5, 4, 0)){
@@ -709,6 +743,7 @@ int main(void){
         }
     };
 
+    shuffleSeed(&seed);
     gpio_put(ledPins[2], true);
 
     display.clear();
@@ -723,8 +758,49 @@ int main(void){
             sleep_ms(100);
         }
     }
+    shuffleSeed(&seed);
     Pers::get();
 
+    shuffleSeed(&seed);
+    uint offset = pio_add_program(pio0, &pwm_program);
+    for (int i = 0; i < IR_CNT; i++){
+        pwm_program_init(pio0, i, offset, ledPins[i]);
+        pio_pwm_set_period(pio0, i, 64);
+    }
+
+    shuffleSeed(&seed);
+    srand(seed);
+
+    Pers::MainData data;
+    if(!Pers::get().readMain(data)){
+        display.clear();
+        writer.print(0, 0, "ERROR");
+        writer.print(0, 10, "reading");
+        writer.print(0, 20, "pin data");
+        display.display();
+        memset(&data, 0, sizeof(data));
+        Pers::get().replaceMain(data);
+        display.clear();
+        writer.print(0, 0, "Data");
+        writer.print(0, 10, "sobrescrita");
+        display.display();
+    }
+    uint8_t zeros[4] = {0,0,0,0};
+    if(memcmp(zeros, data.pin, 4)){
+        uint8_t code[4];
+        do{
+            for(int i=0; i<4; i++) code[i] = rand()%10;
+            Menu::pinReader(display, commonConfirm, code, 4);
+            for(int i=0; i<3; i++){
+                display.clear();
+                writer.print(10+i*20, 30, "*");
+                display.display();
+                sleep_ms(300);
+            }
+        }while(memcmp(code, data.pin, 4));
+    }
+
+#ifdef OLD_LED_INIT_AND_CHECK
     display.clear();
     writer.print(0, 0, "LCD ok, MEM ok");
     writer.print(0, 10, "Acione todas as");
@@ -751,11 +827,7 @@ int main(void){
 
         srand(seed);
     }
-    uint offset = pio_add_program(pio0, &pwm_program);
-    for (int i = 0; i < IR_CNT; i++){
-        pwm_program_init(pio0, i, offset, ledPins[i]);
-        pio_pwm_set_period(pio0, i, 64);
-    }
+#endif
 
     while (1){
         mainLoop();

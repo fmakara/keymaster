@@ -30,7 +30,7 @@ int Dict8::printInto(Sprite* s, int x, int y, const char* str, ...){
 
 int Dict8::printString(Sprite* s, int x, int y, const char* str){
     for(int i=0; str[i]; i++){
-        if(str[i]>=' '){
+        if(str[i]>=' ' && ((str[i]-' ')<96)){
             base->copy(charlist[str[i]-' '], x, y);
             x+=7;
         }

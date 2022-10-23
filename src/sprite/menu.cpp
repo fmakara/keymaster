@@ -398,3 +398,50 @@ int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vecto
         screen.display();
     }
 }
+
+void Menu::pinReader(SSD1306& screen,  uint32_t (*input)(void), uint8_t *pin, uint8_t len){
+    Dict8 writer(&screen);
+    uint8_t off=0;
+    uint8_t ctrl = 0;
+    static const uint8_t FINISH=0;
+    static const uint8_t BACK=1;
+
+    while(true){
+        rand();
+        uint32_t read = (*input)();
+        if(read&BTN_OK){
+            if(off<len){
+                off++;
+            } else {
+                if(ctrl == FINISH) return;
+                if(ctrl == BACK) off=0;
+            }
+        }
+
+        if(read&BTN_UP || read&BTN_RIGHT) {
+            if(off<len){
+                pin[off] = (pin[off]+1)%10;
+            } else {
+                ctrl = (ctrl+1)%2;
+            }
+        }
+        if(read&BTN_DOWN || read&BTN_LEFT) {
+            if(off<len){
+                pin[off] = (pin[off]+9)%10;
+            } else {
+                ctrl = (ctrl+1)%2;
+            }
+        }
+
+        screen.clear();
+        for(int i=0; i<len; i++){
+            char str[] = {(char)('0'+pin[i]), 0};
+            writer.print(i*8, 10, str);
+        }
+        writer.putch(off*8, 0, '^');
+        writer.putch(off*8, 20, 'v');
+        if(ctrl == FINISH) writer.print(len*8, 10, "OK");
+        if(ctrl == BACK) writer.print(len*8, 10, "RE");
+        screen.display();
+    }
+}

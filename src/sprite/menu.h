@@ -21,4 +21,6 @@ public:
     // Uses UP, DOWN, OK and CANCEL (min-1 on cancel)
     static int intRead(SSD1306& screen, uint32_t (*input)(void), int val, int min, int max, const char* descr);
     static int genericList(SSD1306& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem=0);
+
+    static void pinReader(SSD1306& screen,  uint32_t (*input)(void), uint8_t *pin, uint8_t len);
 };

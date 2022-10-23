@@ -29,18 +29,44 @@ Pers::Pers(){
             multicore_lockout_start_blocking();
             uint32_t ints = save_and_disable_interrupts();
             flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE*256);
-            uint8_t base[FLASH_PAGE_SIZE];
-            memset(base, 0xFF, FLASH_PAGE_SIZE);
-            memcpy(base, kMainMagic, sizeof(kMainMagic));
-            flash_range_program(FLASH_TARGET_OFFSET+0*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-            flash_range_program(FLASH_TARGET_OFFSET+1*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-            flash_range_program(FLASH_TARGET_OFFSET+2*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-            flash_range_program(FLASH_TARGET_OFFSET+3*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+            {
+                uint8_t base[FLASH_PAGE_SIZE];
+                memset(base, 0xFF, FLASH_PAGE_SIZE);
+                memcpy(base, kMainMagic, sizeof(kMainMagic));
+                flash_range_program(FLASH_TARGET_OFFSET+0*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+1*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+2*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+3*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+            }
+            {
+                MainDataInner data;
+                uint32_t *base = (uint32_t*)&data;
+                memset(&data, 0, sizeof(MainDataInner));
+                data.magic = kEntryMagic;
+                data.checksum = 0;
+                uint32_t crc = 0;
+                for(int i=0; i<sizeof(MainDataInner)/4; i++) crc ^= base[i];
+                data.checksum = crc;
+                flash_range_program(FLASH_TARGET_OFFSET+0*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+1*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+2*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
+                flash_range_program(FLASH_TARGET_OFFSET+3*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
+            }
             restore_interrupts (ints);
             multicore_lockout_end_blocking();
         }
     }
-    for(int i=1; i<=256; i++){
+    mainOffset = 0;
+    for(int j=0; j<4; j++){
+        if(memcmp(kFlashBase+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, &kEntryMagic, sizeof(kEntryMagic))) continue;
+        uint32_t crc = 0;
+        uint32_t *base = (uint32_t*)(kFlashBase+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE);
+        for(int k=0; k<FLASH_PAGE_SIZE/4; k++) crc ^= base[k];
+        if(crc!=0) continue;
+        mainOffset = FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE;
+        break;
+    }
+    for(int i=2; i<256; i++){
         for(int j=0; j<4; j++){
             if(memcmp(kFlashBase+i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, &kEntryMagic, sizeof(kEntryMagic))) continue;
             uint32_t crc = 0;
@@ -54,6 +80,35 @@ Pers::Pers(){
 }
 
 Pers::~Pers() {}
+
+bool Pers::readMain(MainData& entry){
+    if(mainOffset==0) return false;
+    memcpy(&entry, mainOffset+kFlashBase+8, sizeof(MainData));
+    return true;
+}
+
+bool Pers::replaceMain(const MainData& entry){
+    MainDataInner data;
+    data.entry = entry;
+    data.magic = kEntryMagic;
+    data.checksum = 0;
+    {
+        uint32_t crc = 0;
+        uint32_t *base = (uint32_t*)&data;
+        for(int i=0; i<sizeof(MainDataInner)/4; i++) crc ^= base[i];
+        data.checksum = crc;
+    }
+    multicore_lockout_start_blocking();
+    uint32_t ints = save_and_disable_interrupts();
+    flash_range_erase(FLASH_TARGET_OFFSET+FLASH_SECTOR_SIZE, FLASH_SECTOR_SIZE);
+    for(int j=0; j<4; j++){
+        flash_range_program(FLASH_TARGET_OFFSET+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, (uint8_t*)&data, FLASH_PAGE_SIZE);
+    }
+    restore_interrupts (ints);
+    multicore_lockout_end_blocking();
+    mainOffset = FLASH_SECTOR_SIZE;
+    return true;
+}
 
 uint16_t Pers::count() {
     return offsets.size();
