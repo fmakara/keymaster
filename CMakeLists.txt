@@ -14,9 +14,16 @@ add_executable(keymaster
     src/sprite/sprite.cpp
     src/sprite/menu.cpp
     src/pers/persistency.cpp
+    src/xceiver/xceiver.cpp
 )
 pico_generate_pio_header(keymaster
     ${CMAKE_CURRENT_LIST_DIR}/src/pio_pwm.pio
+)
+pico_generate_pio_header(keymaster
+    ${CMAKE_CURRENT_LIST_DIR}/src/uart_rx.pio
+)
+pico_generate_pio_header(keymaster
+    ${CMAKE_CURRENT_LIST_DIR}/src/uart_tx.pio
 )
 
 target_include_directories(keymaster PUBLIC

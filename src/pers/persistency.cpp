@@ -19,7 +19,6 @@ static const uint8_t kMainMagic[] = {73, 165, 59, 42, 14, 251, 182, 83, 20, 27, 
 static const uint32_t kEntryMagic = 78789659;
 
 Pers::Pers(){
-    //flash_get_unique_id((uint8_t*)uid);
     {
         bool bad1 = memcmp(kFlashBase+0*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
         bool bad2 = memcmp(kFlashBase+1*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
@@ -77,6 +76,7 @@ Pers::Pers(){
             break;
         }
     }
+    flash_get_unique_id((uint8_t*)uid);
 }
 
 Pers::~Pers() {}

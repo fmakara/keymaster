@@ -2,6 +2,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdint.h>
+#include <math.h>
 #include <list>
 #include <string>
 #include <vector>
@@ -11,6 +12,8 @@
 #include "pico/bootrom.h"
 #include "hardware/adc.h"
 #include "hardware/pio.h"
+#include "hardware/regs/resets.h"
+#include "hardware/resets.h"
 
 #include "bsp/board.h"
 #include "tusb.h"
@@ -21,15 +24,26 @@
 #include "sprite/dict8.h"
 #include "sprite/menu.h"
 #include "pers/persistency.h"
+#include "xceiver/xceiver.h"
 
 #define EVT_NUMLOCK 1
 #define EVT_CAPSLOCK 2
 #define EVT_SCROLLLOCK 3
 
+#define PIN_XCEIVER_RX    (12)
+#define PIN_XCEIVER_TX    (13)
+#define PIN_SELECT_IR     (20)
+#define PIN_SELECT_LED    (19)
+#define PIN_DISPLAY_SDA   (4)
+#define PIN_DISPLAY_SCL   (5)
+#define PIN_DISPLAY_RESET (7)
+
 bool lastCaps = false, lastNum = false, lastScroll = false, lastKeysInited = false;
 std::list<char> hidCharList;
 SSD1306_72x40 display;
 Dict8 writer(&display);
+Xceiver xceiver(PIN_XCEIVER_RX, PIN_XCEIVER_TX, 1, 0, 1, 1, 115200);
+bool pauseUsbHandling;
 
 queue_t usbHIDKeyQueue, usbHIDEvtQueue, usbCDCinputQueue;
 const uint8_t ascii2keycode[128][2] = {HID_ASCII_TO_KEYCODE};
@@ -40,8 +54,9 @@ void sendHID(const std::string &s){
 }
 
 #define IR_CNT (3)
-const uint8_t ledPins[IR_CNT] = {20, 19, 18};
-const uint8_t adcPins[IR_CNT] = {26, 27, 28};
+const uint8_t ledPins[IR_CNT] = {23, 22, 21};
+const uint8_t adcPins[IR_CNT] = {28, 27, 26};
+const uint8_t adcNums[IR_CNT] = {2,  1,  0};
 
 void readRawAnalogInputs(uint16_t *dark, uint16_t *bright){
     static const uint8_t binFilter = 2;
@@ -49,10 +64,12 @@ void readRawAnalogInputs(uint16_t *dark, uint16_t *bright){
     static uint32_t lastRawRead[2 * IR_CNT] = {0};
     static bool startedUp = false;
     uint32_t currentRead[2 * IR_CNT];
+    gpio_put(PIN_SELECT_LED, true); // inverted logic... LED OFF
     for (int i = 0; i < IR_CNT; i++) gpio_put(ledPins[i], false);
+    gpio_put(PIN_SELECT_IR, false); // inverted logic... IR ON
     sleep_us(100);
     for (int i = 0; i < IR_CNT; i++){
-        adc_select_input(i);
+        adc_select_input(adcNums[i]);
         currentRead[0 + i] = adc_read();
         gpio_put(ledPins[i], true);
         sleep_us(100);
@@ -84,12 +101,14 @@ uint8_t interpretRawIR(uint16_t *dark, uint16_t *bright){
 }
 
 void turnOffPWM(){
+    gpio_put(PIN_SELECT_LED, true); // inverted logic... LED OFF
     for (int i = 0; i < IR_CNT; i++){
         pio_sm_set_enabled(pio0, i, false);
         gpio_init(ledPins[i]);
         gpio_set_dir(ledPins[i], true);
         gpio_put(ledPins[i], false);
     }
+    gpio_put(PIN_SELECT_IR, false); // inverted logic... IR ON
 }
 
 uint8_t filterInputsAndPWM(uint8_t inputs){
@@ -97,6 +116,7 @@ uint8_t filterInputsAndPWM(uint8_t inputs){
     static const uint8_t RETS[IR_CNT] = {21, 5, 5};
     static uint8_t ledCounters[IR_CNT] = {0};
     uint8_t outputs = 0;
+    gpio_put(PIN_SELECT_IR, true); // inverted logic... IR OFF
     for (int i = 0; i < IR_CNT; i++){
         if (((inputs >> i) & 1) == 0){
             ledCounters[i] = 0;
@@ -114,6 +134,7 @@ uint8_t filterInputsAndPWM(uint8_t inputs){
         pio_sm_set_enabled(pio0, i, true);
         pio_sm_put_blocking(pio0, i, pwmLev);
     }
+    gpio_put(PIN_SELECT_LED, false); // inverted logic... LED ON
     return outputs;
 }
 
@@ -132,6 +153,8 @@ uint8_t readIR(){
 }
 
 void setLeds(uint8_t leds){
+    gpio_put(PIN_SELECT_IR, true); // inverted logic... IR OFF
+    gpio_put(PIN_SELECT_LED, false); // inverted logic... LED ON
     for (int i = 0; i < IR_CNT; i++){
         gpio_put(ledPins[i], (leds & (1 << i)) != 0);
     }
@@ -566,12 +589,164 @@ void subMenuAdicionar(){
     }
 }
 
+#define OPERATION_GET_COUNT (1)
+#define OPERATION_GET_NAME  (2)
+#define OPERATION_GET_UN    (3)
+#define OPERATION_GET_PW    (4)
+#define OPERATION_ERASE     (5)
+#define OPERATION_SET_NAME  (6)
+#define OPERATION_SET_UN    (7)
+#define OPERATION_SET_PW    (8)
+#define OPERATION_APPEND    (9)
+#define OPERATION_END       (10)
+
+void passiveMode(){
+    std::string tmpName, tmpUn, tmpPw;
+    int cogCounter = 0;
+    bool running = true;
+    pauseUsbHandling = true;
+    xceiver.enable();
+    turnOffPWM();
+
+    while(running){
+        xceiver.idle();
+        if(xceiver.available()){
+            std::vector<uint8_t> data;
+            xceiver.rx(data);
+            if(data.size()==1) {
+                if(data[0]==OPERATION_GET_COUNT) {
+                    xceiver.tx({(uint8_t)Pers::get().count()});
+
+                } else if(data[0]==OPERATION_APPEND) {
+                    if(tmpName.size()>0 && tmpUn.size()>0 && tmpPw.size()>0){
+                        Pers::PassEntry entry;
+                        strcpy(entry.name, tmpName.c_str());
+                        strcpy(entry.username, tmpUn.c_str());
+                        strcpy(entry.pass, tmpPw.c_str());
+                        if(Pers::get().appendEntry(entry)){
+                            xceiver.tx({(uint8_t)Pers::get().count()});
+                        } else {
+                            xceiver.tx({});
+                        }
+                    } else {
+                        xceiver.tx({});
+                    }
+                    tmpName = "";
+                    tmpUn = "";
+                    tmpPw = "";
+                }
+                if(data[0]==OPERATION_END) {
+                    xceiver.tx({1});
+                    running = false;
+                    for(int i=0; i<10; i++){
+                        xceiver.idle();
+                        sleep_ms(10);
+                    }
+                } else {
+                    xceiver.tx({});
+                }
+            } else if(data.size()==2) {
+                Pers::PassEntry entry;
+                if(data[0]==OPERATION_GET_NAME) {
+                    if(Pers::get().readEntry(data[1], entry)){
+                        xceiver.tx(std::vector<uint8_t>(entry.name, entry.name+strlen(entry.name)));
+                    } else {
+                        xceiver.tx({});
+                    }
+
+                } else if(data[0]==OPERATION_GET_UN) {
+                    if(Pers::get().readEntry(data[1], entry)){
+                        xceiver.tx(std::vector<uint8_t>(entry.username, entry.name+strlen(entry.username)));
+                    } else {
+                        xceiver.tx({});
+                    }
+
+                } else if(data[0]==OPERATION_GET_PW) {
+                    if(Pers::get().readEntry(data[1], entry)){
+                        xceiver.tx(std::vector<uint8_t>(entry.pass, entry.pass+strlen(entry.pass)));
+                    } else {
+                        xceiver.tx({});
+                    }
+
+                } else if(data[0]==OPERATION_ERASE) {
+                    if(Pers::get().eraseEntry(data[1])){
+                        xceiver.tx({(uint8_t)Pers::get().count()});
+                    } else {
+                        xceiver.tx({});
+                    }
+                } else {
+                    xceiver.tx({});
+                }
+            } else {
+                if(data[0]==OPERATION_SET_NAME) {
+                    if(data.size()<=33){
+                        char tmp[33];
+                        memcpy(tmp, data.data()+1, data.size()-1);
+                        tmp[32] = 0;
+                        tmpName = tmp;
+                    } else {
+                        tmpName = "";
+                        xceiver.tx({});
+                    }
+
+                } else if(data[0]==OPERATION_SET_UN) {
+                    if(data.size()<=129){
+                        char tmp[129];
+                        memcpy(tmp, data.data()+1, data.size()-1);
+                        tmp[128] = 0;
+                        tmpUn = tmp;
+                    } else {
+                        tmpUn = "";
+                        xceiver.tx({});
+                    }
+
+                } else if(data[0]==OPERATION_SET_PW) {
+                    if(data.size()<=65){
+                        char tmp[65];
+                        memcpy(tmp, data.data()+1, data.size()-1);
+                        tmp[64] = 0;
+                        tmpPw = tmp;
+                    } else {
+                        tmpPw = "";
+                        xceiver.tx({});
+                    }
+
+                } else {
+                    xceiver.tx({});
+                }
+            }
+        } else {
+            display.clear();
+            xceiver.idle();
+            writer.putch(30+sin((cogCounter+0)*2*3.14/16)*12,12+cos((cogCounter+0)*2*3.14/16)*12,'o');
+            xceiver.idle();
+            writer.putch(30+sin((cogCounter+4)*2*3.14/16)*12,12+cos((cogCounter+4)*2*3.14/16)*12,'o');
+            xceiver.idle();
+            writer.putch(30+sin((cogCounter+8)*2*3.14/16)*12,12+cos((cogCounter+8)*2*3.14/16)*12,'o');
+            xceiver.idle();
+            writer.putch(30+sin((cogCounter+12)*2*3.14/16)*12,12+cos((cogCounter+12)*2*3.14/16)*12,'o');
+            cogCounter = (cogCounter+1)%16;
+            xceiver.idle();
+            display.display();
+            xceiver.idle();
+        }
+    }
+    xceiver.disable();
+    pauseUsbHandling = false;
+}
+
+void activeMode() {
+
+}
+
 void subMenuExtras(){
     std::vector<std::string> menuList = {
         "Voltar",
         "Mudar PIN",
         "FW Update",
         "Despejar dados",
+        "Modo Passivo",
+        "Modo Ativo",
     };
     while (true){
         int idx = Menu::genericList(display, commonMenuRead, menuList, 0);
@@ -623,6 +798,14 @@ void subMenuExtras(){
                     }
                 }
             }
+        }else if (idx == 4){
+            //if (Menu::confirm(display, phyConfirm, {"! Entrar modo", "  passivo?"})){
+                passiveMode();
+            //}
+        }else if (idx == 5){
+            //if (Menu::confirm(display, phyConfirm, {"! Entrar modo", "  ativo?"})){
+                activeMode();
+            //}
         }else{
             return;
         }
@@ -664,6 +847,11 @@ void core1_entry(){
     uint32_t hid_next_ms = 0;
 
     while (1){
+        if(pauseUsbHandling){
+            reset_block(RESETS_RESET_USBCTRL_BITS);
+            while(pauseUsbHandling) sleep_ms(100);
+            tusb_init();
+        }
         tud_task();
 
         if (tud_hid_ready()){
@@ -709,12 +897,28 @@ void shuffleSeed(uint32_t *seed){
 }
 
 int main(void){
-    uint32_t seed = 0xA0A0A0A0 + Pers::get().getCombinedId();
+    uint32_t seed = 0xA0A0A0A0;
     board_init();
     adc_init();
-    for (int i = 8; i <= 15; i++) gpio_set_pulls(i, false, false);
-    gpio_set_pulls(9, true, false);
-    gpio_set_pulls(12, true, false);
+    gpio_init(PIN_XCEIVER_RX);
+    gpio_set_dir(PIN_XCEIVER_RX, GPIO_IN);
+    gpio_set_pulls(PIN_XCEIVER_RX, false, false);
+
+    gpio_init(PIN_XCEIVER_TX);
+    gpio_set_dir(PIN_XCEIVER_TX, GPIO_IN);
+    gpio_set_pulls(PIN_XCEIVER_TX, false, false);
+
+    gpio_init(PIN_SELECT_IR);
+    gpio_set_dir(PIN_SELECT_IR, GPIO_OUT);
+    gpio_put(PIN_SELECT_IR, true);
+    gpio_set_pulls(PIN_SELECT_IR, false, false);
+
+    gpio_init(PIN_SELECT_LED);
+    gpio_set_dir(PIN_SELECT_LED, GPIO_OUT);
+    gpio_put(PIN_SELECT_LED, false);
+    gpio_set_pulls(PIN_SELECT_LED, false, false);
+
+    shuffleSeed(&seed);
 
     for (int i = 0; i < IR_CNT; i++){
         gpio_init(ledPins[i]);
@@ -723,8 +927,11 @@ int main(void){
         gpio_set_pulls(ledPins[i], false, false);
         adc_gpio_init(adcPins[i]);
     }
-    shuffleSeed(&seed);
+
     gpio_put(ledPins[0], true);
+
+    xceiver.init();
+    pauseUsbHandling = false;
 
     queue_init(&usbHIDKeyQueue, 1, 512);
     queue_init(&usbHIDEvtQueue, 1, 16);
@@ -732,9 +939,10 @@ int main(void){
     multicore_launch_core1(core1_entry);
 
     shuffleSeed(&seed);
+
     gpio_put(ledPins[1], true);
 
-    if (!display.init(8, 5, 4, 0)){
+    if (!display.init(PIN_DISPLAY_RESET, PIN_DISPLAY_SCL, PIN_DISPLAY_SDA, 0)){
         for (int i = 0; i < 15; i++){
             gpio_put(ledPins[2], true);
             sleep_ms(300);
@@ -760,6 +968,7 @@ int main(void){
     }
     shuffleSeed(&seed);
     Pers::get();
+    seed += Pers::get().getCombinedId();
 
     shuffleSeed(&seed);
     uint offset = pio_add_program(pio0, &pwm_program);
