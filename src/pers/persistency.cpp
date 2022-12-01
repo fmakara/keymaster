@@ -8,9 +8,9 @@
 #include "pico/multicore.h"
 
 
-#define FLASH_TARGET_OFFSET (256 * 1024)
+#define FLASH_TARGET_OFFSET (1024 * 1024)
 
-static const uint8_t *kFlashBase = (const uint8_t *) (XIP_BASE + FLASH_TARGET_OFFSET);
+static uint8_t* kFlashBase = (uint8_t*) (XIP_BASE + FLASH_TARGET_OFFSET);
 // total bytes: 2.097.152 - 262.144 = 1.835.008 (or 786.432 if using  half, 768 sectors)
 // flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE); // 4096
 // flash_range_program(FLASH_TARGET_OFFSET, random_data, FLASH_PAGE_SIZE); // 256
@@ -76,7 +76,13 @@ Pers::Pers(){
             break;
         }
     }
-    flash_get_unique_id((uint8_t*)uid);
+    {
+        multicore_lockout_start_blocking();
+        uint32_t ints = save_and_disable_interrupts();
+        flash_get_unique_id((uint8_t*)uid);
+        restore_interrupts (ints);
+        multicore_lockout_end_blocking();
+    }
 }
 
 Pers::~Pers() {}

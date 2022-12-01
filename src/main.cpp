@@ -9,6 +9,7 @@
 #include "hardware/gpio.h"
 #include "pico/multicore.h"
 #include "pico/util/queue.h"
+#include "pico/time.h"
 #include "pico/bootrom.h"
 #include "hardware/adc.h"
 #include "hardware/pio.h"
@@ -43,7 +44,7 @@ std::list<char> hidCharList;
 SSD1306_72x40 display;
 Dict8 writer(&display);
 Xceiver xceiver(PIN_XCEIVER_RX, PIN_XCEIVER_TX, 1, 0, 1, 1, 115200);
-bool pauseUsbHandling;
+volatile static uint8_t pauseUsbHandling;
 
 queue_t usbHIDKeyQueue, usbHIDEvtQueue, usbCDCinputQueue;
 const uint8_t ascii2keycode[128][2] = {HID_ASCII_TO_KEYCODE};
@@ -51,6 +52,10 @@ const uint8_t ascii2keycode[128][2] = {HID_ASCII_TO_KEYCODE};
 void sendHID(const std::string &s){
     for (int i = 0; i < s.size(); i++)
         queue_add_blocking(&usbHIDKeyQueue, &s[i]);
+}
+
+inline static uint64_t micros(){
+    return to_us_since_boot(get_absolute_time());
 }
 
 #define IR_CNT (3)
@@ -604,7 +609,7 @@ void passiveMode(){
     std::string tmpName, tmpUn, tmpPw;
     int cogCounter = 0;
     bool running = true;
-    pauseUsbHandling = true;
+    pauseUsbHandling = 1;
     xceiver.enable();
     turnOffPWM();
 
@@ -649,21 +654,21 @@ void passiveMode(){
                 Pers::PassEntry entry;
                 if(data[0]==OPERATION_GET_NAME) {
                     if(Pers::get().readEntry(data[1], entry)){
-                        xceiver.tx(std::vector<uint8_t>(entry.name, entry.name+strlen(entry.name)));
+                        xceiver.tx(std::vector<uint8_t>(entry.name, entry.name+strlen(entry.name)+1));
                     } else {
                         xceiver.tx({});
                     }
 
                 } else if(data[0]==OPERATION_GET_UN) {
                     if(Pers::get().readEntry(data[1], entry)){
-                        xceiver.tx(std::vector<uint8_t>(entry.username, entry.name+strlen(entry.username)));
+                        xceiver.tx(std::vector<uint8_t>(entry.username, entry.username+strlen(entry.username)+1));
                     } else {
                         xceiver.tx({});
                     }
 
                 } else if(data[0]==OPERATION_GET_PW) {
                     if(Pers::get().readEntry(data[1], entry)){
-                        xceiver.tx(std::vector<uint8_t>(entry.pass, entry.pass+strlen(entry.pass)));
+                        xceiver.tx(std::vector<uint8_t>(entry.pass, entry.pass+strlen(entry.pass)+1));
                     } else {
                         xceiver.tx({});
                     }
@@ -732,11 +737,114 @@ void passiveMode(){
         }
     }
     xceiver.disable();
-    pauseUsbHandling = false;
+    pauseUsbHandling = 0;
 }
 
 void activeMode() {
+    // just doing dumb copy for now, as I need to redesign the board ASAP
+    while(Pers::get().count()>0)Pers::get().eraseEntry(0);
 
+    // std::string tmpName, tmpUn, tmpPw;
+    // int cogCounter = 0;
+    // bool running = true;
+    pauseUsbHandling = 1;
+    xceiver.enable();
+    turnOffPWM();
+
+    std::string failReason;
+    uint64_t end;
+    int entryCount = 0;
+    std::vector<uint8_t> rawResponse;
+    xceiver.tx({OPERATION_GET_COUNT});
+    end = micros()+1000000;
+    while(xceiver.available()==0){
+        if(micros()>end) {
+            failReason = "Sem comunicacao";
+            goto exitActiveMode;
+        }
+        xceiver.idle();
+    }
+    xceiver.rx(rawResponse);
+    entryCount = rawResponse[0];
+
+    display.clear();
+    writer.print(0, 10, "entradas: %d", entryCount);
+    display.display();
+
+    for(uint8_t i=0; i<entryCount; i++){
+        Pers::PassEntry entry;
+        memset(&entry, 0, sizeof(entry));
+
+        writer.print(0, 20, "   %d", i);
+        display.display();
+
+        xceiver.tx({OPERATION_GET_NAME, i});
+        end = micros()+1000000;
+        while(xceiver.available()==0){
+            if(micros()>end) {
+                failReason = "falha nome";
+                goto exitActiveMode;
+            }
+            xceiver.idle();
+        }
+        xceiver.rx(rawResponse);
+        memcpy(entry.name, &rawResponse[0], rawResponse.size());
+
+        writer.print(0, 20, "N");
+        display.display();
+
+        xceiver.tx({OPERATION_GET_UN, i});
+        end = micros()+1000000;
+        while(xceiver.available()==0){
+            if(micros()>end) {
+                failReason = "falha un";
+                goto exitActiveMode;
+            }
+            xceiver.idle();
+        }
+        xceiver.rx(rawResponse);
+        memcpy(entry.username, &rawResponse[0], rawResponse.size());
+
+        writer.print(0, 20, "U");
+        display.display();
+
+        xceiver.tx({OPERATION_GET_PW, i});
+        end = micros()+1000000;
+        while(xceiver.available()==0){
+            if(micros()>end) {
+                failReason = "falha pw";
+                goto exitActiveMode;
+            }
+            xceiver.idle();
+        }
+        xceiver.rx(rawResponse);
+        memcpy(entry.pass, &rawResponse[0], rawResponse.size());
+
+        writer.print(0, 20, "P");
+        display.display();
+
+        if(!Pers::get().appendEntry(entry)){
+            failReason = "falha adicionar";
+            goto exitActiveMode;
+        }
+    }
+
+    display.clear();
+    writer.print(0, 10, "Importado %d", entryCount);
+    writer.print(0, 20, "  entradas");
+    display.display();
+    sleep_ms(1000);
+    xceiver.disable();
+    pauseUsbHandling = 0;
+    return;
+
+exitActiveMode:
+    display.clear();
+    writer.print(0, 10, failReason.c_str());
+    display.display();
+    sleep_ms(1000);
+    xceiver.disable();
+    pauseUsbHandling = 0;
 }
 
 void subMenuExtras(){
@@ -931,7 +1039,7 @@ int main(void){
     gpio_put(ledPins[0], true);
 
     xceiver.init();
-    pauseUsbHandling = false;
+    pauseUsbHandling = 0;
 
     queue_init(&usbHIDKeyQueue, 1, 512);
     queue_init(&usbHIDEvtQueue, 1, 16);
