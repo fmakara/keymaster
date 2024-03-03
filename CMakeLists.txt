@@ -7,6 +7,7 @@ pico_sdk_init()
 
 add_executable(keymaster
     src/main.cpp
+    src/menus.cpp
     src/usb/usb_descriptors.cpp
     src/usb/unused_callbacks.cpp
     src/display/ssd1306.cpp
@@ -15,6 +16,8 @@ add_executable(keymaster
     src/sprite/menu.cpp
     src/pers/persistency.cpp
     src/xceiver/xceiver.cpp
+    src/inputs/darlington_inputs.cpp
+    src/keyboard_hid/keyboard_hid_handler.cpp
 )
 pico_generate_pio_header(keymaster
     ${CMAKE_CURRENT_LIST_DIR}/src/pio_pwm.pio
