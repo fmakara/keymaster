@@ -322,16 +322,7 @@ int main(void){
     uint32_t seed = 0xA0A0A0A0;
     board_init();
     adc_init();
-    gpio_init(PIN_XCEIVER_RX);
-    gpio_set_dir(PIN_XCEIVER_RX, GPIO_IN);
-    gpio_set_pulls(PIN_XCEIVER_RX, false, false);
 
-    gpio_init(PIN_XCEIVER_TX);
-    gpio_set_dir(PIN_XCEIVER_TX, GPIO_IN);
-    gpio_set_pulls(PIN_XCEIVER_TX, false, false);
-
-    shuffleSeed(&seed);
-    display.init(PIN_DISPLAY_RESET, PIN_DISPLAY_SCL, PIN_DISPLAY_SDA, 0);
     shuffleSeed(&seed);
     xceiver.init();
     shuffleSeed(&seed);
@@ -385,11 +376,11 @@ int main(void){
         do{
             for(int i=0; i<4; i++) code[i] = rand()%10;
             Menu::pinReader(display, commonConfirm, code, 4);
-            for(int i=0; i<3; i++){
+            for(int i=0; i<10; i++){
                 display.clear();
-                writer.print(10+i*20, 30, "*");
+                writer.print(10+i*5, 30, "*");
                 display.display();
-                sleep_ms(300);
+                sleep_ms(30);
             }
         }while(memcmp(code, data.pin, 4));
     }

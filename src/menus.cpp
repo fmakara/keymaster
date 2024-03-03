@@ -392,16 +392,16 @@ void subMenuExtras(){
                 sleep_ms(500);
             }
         }else if (idx == 2){
-            //if (Menu::confirm(display, phyConfirm, {"! Trocar mesmo", "o firmware?"})){
-            //    if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", " convencer", "contrario?"})){
+            if (Menu::confirm(display, phyConfirm, {"! Trocar mesmo", "o firmware?"})){
+                if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", " convencer", "contrario?"})){
                     display.clear();
                     writer.print(16, 0, "Update de");
                     writer.print(16, 10, "Firmware");
                     writer.print(16, 20, "Ativo");
                     display.display();
                     rebootAndFirmwareUpdate();
-            //    }
-            //}
+                }
+            }
         }else if (idx == 3){
             if (Menu::confirm(display, phyConfirm, {"! Despejar mesmo", "todos os dados?"})){
                 if (!Menu::confirm(display, phyConfirm, {"! Nao tem como", "convencer", "contrario?"})){

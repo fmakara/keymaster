@@ -297,6 +297,8 @@ int Menu::intRead(SSD1306& screen, uint32_t (*input)(void), int val, int min, in
 
 int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vector<std::string>& items, int startingItem){
     Dict8 writer(&screen);
+    static const uint8_t speedMul = 2;
+    static const uint8_t speedSm = 2;
     int idx = startingItem;
     int sm = 0;
     if(items.size()==0) return 0;
@@ -343,7 +345,7 @@ int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vecto
             return -1;
         }
         if(read&BTN_UP) {
-            for(int k=0; k<8; k++){
+            for(int k=0; k<8; k+=speedMul){
                 screen.clear();
                 writer.print(0,9,">");
                 for(int i=2; i<(screen.height()/8); i++){
@@ -360,7 +362,7 @@ int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vecto
             idx = (idx+items.size()-1)%items.size();
         }
         if(read&BTN_DOWN) {
-            for(int k=0; k<8; k++){
+            for(int k=0; k<8; k+=speedMul){
                 screen.clear();
                 writer.print(0,9,">");
                 for(int i=3; i<(screen.height()/8); i++){
@@ -379,7 +381,7 @@ int Menu::genericList(SSD1306& screen, uint32_t (*input)(void), const std::vecto
             idx = (idx+1)%items.size();
         }
         if(read) sm = 0;
-        sm++;
+        sm+=speedSm;
 
         screen.clear();
         for(int i=0; i<(screen.height()/8); i++){
