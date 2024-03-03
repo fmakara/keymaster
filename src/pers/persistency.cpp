@@ -18,24 +18,28 @@ static uint8_t* kFlashBase = (uint8_t*) (XIP_BASE + FLASH_TARGET_OFFSET);
 static const uint8_t kMainMagic[] = {73, 165, 59, 42, 14, 251, 182, 83, 20, 27, 67, 133, 186, 218, 129, 252};
 static const uint32_t kEntryMagic = 78789659;
 
+static void eraseSector(uint32_t sector);
+static void eraseSectors(uint32_t sector, uint32_t count);
+static void writePage(uint32_t sector, uint32_t page, uint8_t* data);
+static uint8_t* pagePointer(uint32_t sector, uint32_t page);
+static void readFlashUID(uint8_t* uid);
+
 Pers::Pers(){
     {
-        bool bad1 = memcmp(kFlashBase+0*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
-        bool bad2 = memcmp(kFlashBase+1*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
-        bool bad3 = memcmp(kFlashBase+2*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
-        bool bad4 = memcmp(kFlashBase+3*FLASH_PAGE_SIZE, kMainMagic, sizeof(kMainMagic));
+        bool bad1 = memcmp(pagePointer(0, 0), kMainMagic, sizeof(kMainMagic));
+        bool bad2 = memcmp(pagePointer(0, 1), kMainMagic, sizeof(kMainMagic));
+        bool bad3 = memcmp(pagePointer(0, 2), kMainMagic, sizeof(kMainMagic));
+        bool bad4 = memcmp(pagePointer(0, 3), kMainMagic, sizeof(kMainMagic));
         if( bad1 && bad2 && bad1 && bad4 ){
-            multicore_lockout_start_blocking();
-            uint32_t ints = save_and_disable_interrupts();
-            flash_range_erase(FLASH_TARGET_OFFSET, FLASH_SECTOR_SIZE*256);
+            eraseSectors(0, 256);
             {
                 uint8_t base[FLASH_PAGE_SIZE];
                 memset(base, 0xFF, FLASH_PAGE_SIZE);
                 memcpy(base, kMainMagic, sizeof(kMainMagic));
-                flash_range_program(FLASH_TARGET_OFFSET+0*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+1*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+2*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+3*FLASH_PAGE_SIZE, base, FLASH_PAGE_SIZE);
+                writePage(0, 0, base);
+                writePage(0, 1, base);
+                writePage(0, 2, base);
+                writePage(0, 3, base);
             }
             {
                 MainDataInner data;
@@ -46,20 +50,19 @@ Pers::Pers(){
                 uint32_t crc = 0;
                 for(int i=0; i<sizeof(MainDataInner)/4; i++) crc ^= base[i];
                 data.checksum = crc;
-                flash_range_program(FLASH_TARGET_OFFSET+0*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+1*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+2*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
-                flash_range_program(FLASH_TARGET_OFFSET+3*FLASH_PAGE_SIZE+FLASH_SECTOR_SIZE, (uint8_t*)base, FLASH_PAGE_SIZE);
+
+                writePage(1, 0, (uint8_t*)base);
+                writePage(1, 1, (uint8_t*)base);
+                writePage(1, 2, (uint8_t*)base);
+                writePage(1, 3, (uint8_t*)base);
             }
-            restore_interrupts (ints);
-            multicore_lockout_end_blocking();
         }
     }
     mainOffset = 0;
     for(int j=0; j<4; j++){
-        if(memcmp(kFlashBase+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, &kEntryMagic, sizeof(kEntryMagic))) continue;
+        if(memcmp(pagePointer(1, j), &kEntryMagic, sizeof(kEntryMagic))) continue;
         uint32_t crc = 0;
-        uint32_t *base = (uint32_t*)(kFlashBase+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE);
+        uint32_t *base = (uint32_t*)(pagePointer(1, j));
         for(int k=0; k<FLASH_PAGE_SIZE/4; k++) crc ^= base[k];
         if(crc!=0) continue;
         mainOffset = FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE;
@@ -67,22 +70,16 @@ Pers::Pers(){
     }
     for(int i=2; i<256; i++){
         for(int j=0; j<4; j++){
-            if(memcmp(kFlashBase+i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, &kEntryMagic, sizeof(kEntryMagic))) continue;
+            if(memcmp(pagePointer(i, j), &kEntryMagic, sizeof(kEntryMagic))) continue;
             uint32_t crc = 0;
-            uint32_t *base = (uint32_t*)(kFlashBase+i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE);
+            uint32_t *base = (uint32_t*)(pagePointer(i, j));
             for(int k=0; k<FLASH_PAGE_SIZE/4; k++) crc ^= base[k];
             if(crc!=0) continue;
             offsets.push_back(i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE);
             break;
         }
     }
-    {
-        multicore_lockout_start_blocking();
-        uint32_t ints = save_and_disable_interrupts();
-        flash_get_unique_id((uint8_t*)uid);
-        restore_interrupts (ints);
-        multicore_lockout_end_blocking();
-    }
+    readFlashUID((uint8_t*)uid);
 }
 
 Pers::~Pers() {}
@@ -104,14 +101,10 @@ bool Pers::replaceMain(const MainData& entry){
         for(int i=0; i<sizeof(MainDataInner)/4; i++) crc ^= base[i];
         data.checksum = crc;
     }
-    multicore_lockout_start_blocking();
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(FLASH_TARGET_OFFSET+FLASH_SECTOR_SIZE, FLASH_SECTOR_SIZE);
+    eraseSector(1);
     for(int j=0; j<4; j++){
-        flash_range_program(FLASH_TARGET_OFFSET+FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, (uint8_t*)&data, FLASH_PAGE_SIZE);
+        writePage(1, j, (uint8_t*)&data);
     }
-    restore_interrupts (ints);
-    multicore_lockout_end_blocking();
     mainOffset = FLASH_SECTOR_SIZE;
     return true;
 }
@@ -141,23 +134,18 @@ bool Pers::appendEntry(const PassEntry& entry){
         data.checksum = crc;
     }
 
-    for(int i=1; i<=256; i++){
+    for(int i=2; i<=256; i++){
         bool hasGood = false;
         for(int j=0; j<4 && !hasGood; j++){
-            if(!memcmp(kFlashBase+i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, &kEntryMagic, sizeof(kEntryMagic))){
+            if(!memcmp(pagePointer(i, j), &kEntryMagic, sizeof(kEntryMagic))){
                 hasGood = true;
             }
         }
         if(hasGood) continue;
-
-        multicore_lockout_start_blocking();
-        uint32_t ints = save_and_disable_interrupts();
-        flash_range_erase(FLASH_TARGET_OFFSET+i*FLASH_SECTOR_SIZE, FLASH_SECTOR_SIZE);
+        eraseSector(i);
         for(int j=0; j<4; j++){
-            flash_range_program(FLASH_TARGET_OFFSET+i*FLASH_SECTOR_SIZE+j*FLASH_PAGE_SIZE, (uint8_t*)&data, FLASH_PAGE_SIZE);
+            writePage(i, j, (uint8_t*)&data);
         }
-        restore_interrupts (ints);
-        multicore_lockout_end_blocking();
         offsets.push_back(i*FLASH_SECTOR_SIZE);
         return true;
     }
@@ -167,12 +155,8 @@ bool Pers::appendEntry(const PassEntry& entry){
 
 bool Pers::eraseEntry(uint16_t id){
     if(id>=count()) return false;
-    uint32_t sector = offsets[id]&~(FLASH_SECTOR_SIZE-1);
-    multicore_lockout_start_blocking();
-    uint32_t ints = save_and_disable_interrupts();
-    flash_range_erase(FLASH_TARGET_OFFSET+sector, FLASH_SECTOR_SIZE);
-    restore_interrupts (ints);
-    multicore_lockout_end_blocking();
+    uint32_t sector = offsets[id]/FLASH_SECTOR_SIZE;
+    eraseSector(sector);
     offsets.erase(offsets.begin()+id);
     return true;
 }
@@ -187,4 +171,49 @@ uint32_t Pers::getLowId(){
 
 uint32_t Pers::getHighId(){
     return uid[1];
+}
+
+static uint32_t begin_critical_flash_section(void) {
+    if (multicore_lockout_victim_is_initialized(1 - get_core_num())) {
+        multicore_lockout_start_blocking();
+    }
+    return save_and_disable_interrupts();
+}
+
+static void end_critical_flash_section(uint32_t state) {
+    restore_interrupts(state);
+    if (multicore_lockout_victim_is_initialized(1 - get_core_num())) {
+        multicore_lockout_end_blocking();
+    }
+}
+
+static void eraseSector(uint32_t sector){
+    uint32_t byteaddress = FLASH_TARGET_OFFSET + sector*FLASH_SECTOR_SIZE;
+    uint32_t atomic_state = begin_critical_flash_section();
+    flash_range_erase(byteaddress, FLASH_SECTOR_SIZE);
+    end_critical_flash_section(atomic_state);
+}
+
+static void eraseSectors(uint32_t sector, uint32_t count){
+    uint32_t byteaddress = FLASH_TARGET_OFFSET + sector*FLASH_SECTOR_SIZE;
+    uint32_t atomic_state = begin_critical_flash_section();
+    flash_range_erase(byteaddress, count*FLASH_SECTOR_SIZE);
+    end_critical_flash_section(atomic_state);
+}
+
+static void writePage(uint32_t sector, uint32_t page, uint8_t* data){
+    uint32_t byteaddress = FLASH_TARGET_OFFSET + sector*FLASH_SECTOR_SIZE + page*FLASH_PAGE_SIZE;
+    uint32_t atomic_state = begin_critical_flash_section();
+    flash_range_program(byteaddress, data, FLASH_PAGE_SIZE);
+    end_critical_flash_section(atomic_state);
+}
+
+static uint8_t* pagePointer(uint32_t sector, uint32_t page){
+    return kFlashBase + sector*FLASH_SECTOR_SIZE + page*FLASH_PAGE_SIZE;
+}
+
+static void readFlashUID(uint8_t* uid){
+    uint32_t atomic_state = begin_critical_flash_section();
+    flash_get_unique_id(uid);
+    end_critical_flash_section(atomic_state);
 }
